@@ -1,6 +1,7 @@
 #!/bin/bash
 
 packages=(
+  nginx
   kpartx
   iscsitarget
   iscsitarget-dkms
