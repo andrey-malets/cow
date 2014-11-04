@@ -346,12 +346,14 @@ if __name__ == '__main__':
     error('no volumes, nothing to do')
   last_volume = volumes[sorted(volumes.keys())[-1]]
 
+  last_target = None
   if last_volume.tid == None:
-    (tid, target) = build_live_target(last_volume)
-    live_targets[tid] = target
-    target.last = True
+    (tid, last_target) = build_live_target(last_volume)
+    live_targets[tid] = last_target
   else:
-    live_targets[last_volume.tid].last = True
+    last_target = live_targets[last_volume.tid]
+
+  last_target.last = True
 
   free_targets(volumes, live_targets)
   free_volumes(volumes)
@@ -359,14 +361,9 @@ if __name__ == '__main__':
   iet_config = '/etc/iet/ietd.conf'
   config_targets = get_config_targets(iet_config)
 
-  final_targets = []
-  for target in config_targets.itervalues():
-    if not is_interesting(disk_pattern, target):
-      final_targets.append(target)
-
-  for target in live_targets.itervalues():
-    if target.last:
-      final_targets.append(target)
+  final_targets = filter(lambda target: not is_interesting(disk_pattern, target),
+                         config_targets.itervalues())
+  final_targets.append(last_target)
 
   new_config = '{}.new'.format(iet_config)
   put_config_targets(final_targets, new_config)
