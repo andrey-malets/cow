@@ -4,8 +4,12 @@ import glob, os, re, sys, subprocess
 from get_disks import get_disks
 
 
-def format_attrs(attrs):
-  return ','.join('{}={}'.format(key, value) for key, value in attrs.iteritems())
+def format_params(params):
+  return ','.join('{}={}'.format(key, value) for key, value in params.iteritems())
+
+
+def parse_params(params, psp, kvsp):
+  return dict(param.split(kvsp, 2) for param in params.split(psp))
 
 
 class Volume:
@@ -24,7 +28,7 @@ class LUN:
 
   @staticmethod
   def from_live(number, params):
-    lun      = LUN(number)
+    lun = LUN(number)
     lun.path = params['path']
     for src, dst in {'iotype': 'Type', 'iomode': 'IOMode'}.iteritems():
       if src in params:
@@ -47,6 +51,8 @@ class LUN:
 
 
 class Target:
+  DEFAULT_PARAMS = {'NOPInterval': '60', 'NOPTimeout': '5'}
+
   def __init__(self, name):
     self.name     = name
     self.tid      = None
@@ -57,9 +63,9 @@ class Target:
   @staticmethod
   def from_live(name, tid, params):
     target = Target(name)
-    target.tid      = tid
-    target.params   = {}
-    for key, default in {'NOPInterval': '60', 'NOPTimeout': '5'}.iteritems():
+    target.tid    = tid
+    target.params = {}
+    for key, default in Target.DEFAULT_PARAMS.iteritems():
       target.params[key] = params.get(key, default)
     return target
 
@@ -70,19 +76,15 @@ class Target:
     target.params = params.copy()
     return target
 
-  def format_params(self):
-    return (','.join('{}={}'.format(key, value)
-        for key, value in self.params.iteritems()))
-
   def __str__(self):
     rv = 'target {} {} last={}\n'.format(self.tid, self.name, self.last)
-    rv += ' params: {}\n'.format(self.format_params())
+    rv += ' params: {}\n'.format(format_params(self.params))
     for lun in self.luns:
       rv += '  lun: {} {}\n'.format(lun.number, lun.format_params())
     for sid, session in self.sessions.iteritems():
       rv += '  session: {} {}\n'.format(session.sid, session.initiator)
       for cid, connection in session.connections.iteritems():
-        rv += '    connection: {} {}\n'.format(cid, format_attrs(connection.attrs))
+        rv += '    connection: {} {}\n'.format(cid, format_params(connection.attrs))
     return rv
 
 
@@ -100,64 +102,51 @@ class Session:
 
 
 def get_live_targets():
-  FILE = '/proc/net/iet/volume'
-
   tid, target = [None] * 2
   targets = {}
-
-  with open(FILE, 'r') as infile:
+  with open('/proc/net/iet/volume', 'r') as infile:
     for line in infile:
       is_tid = re.search('^tid:(\d+)\s+name:(.+)$', line)
       is_lun = re.search('^\s+lun:(\d+)\s+(.+)$', line)
       if is_tid:
         tid, name = is_tid.group(1, 2)
-        target_params = {}
-        for param in call_ietadm('show', tid).strip().split('\n'):
-          key, value = param.split('=', 2)
-          target_params[key] = value
+        target_params = parse_params(call_ietadm('show', tid).strip(), '\n', '=')
         target = Target.from_live(name, tid, target_params)
         targets[tid] = target
       else:
-        assert(target)
-        assert(is_lun)
+        assert(target and is_lun)
         lun_id = is_lun.group(1)
-        params = {}
-        for param in is_lun.group(2).split(' '):
-          key, value = param.split(':')
-          params[key] = value
+        params = parse_params(is_lun.group(2), ' ', ':')
         target.luns.append(LUN.from_live(lun_id, params))
 
-  FILE = '/proc/net/iet/session'
-
   target, sid, session = [None] * 3
-
-  with open(FILE, 'r') as infile:
+  with open('/proc/net/iet/session', 'r') as infile:
     for line in infile:
       is_tid = re.search('^tid:(\d+)\s+name:(.+)$', line)
       is_sid = re.search('^\s+sid:(\d+)\s+initiator:(.+)$', line)
       is_cid = re.search('^\s+cid:(\d+)\s+(.+)$', line)
-      if is_tid != None:
-        if target != None and session != None:
+      if is_tid:
+        if target and session:
           target.sessions[sid] = session
           target, sid, session = [None] * 3
         tid, name = is_tid.group(1, 2)
         assert(tid in targets)
         target = targets[tid]
         assert(target.name == name)
-      elif is_sid != None:
-        if session != None:
+      elif is_sid:
+        if session:
           target.sessions[sid] = session
         sid, session = [None] * 2
         sid, initiator = is_sid.group(1, 2)
         session = Session(sid, initiator)
       else:
-        assert(is_cid != None)
+        assert(is_cid)
         cid = is_cid.group(1)
-        attrs = dict(map(lambda attr: attr.split(':', 2), is_cid.group(2).split(' ')))
+        attrs = parse_params(is_cid.group(2), ' ', ':')
         connection = Connection(cid, attrs)
         session.connections[cid] = connection
 
-  if target != None and session != None:
+  if target and session:
     target.sessions[sid] = session
     target, sid, session = [None] * 3
   return targets
@@ -186,15 +175,14 @@ def get_config_targets(filename):
       elif is_lun:
         assert(name)
         lun_id = is_lun.group(1)
-        lun_params = dict(map(lambda param: param.split('='),
-                              is_lun.group(2).split(',')))
+        lun_params = parse_params(is_lun.group(2), ',', '=')
         luns.append(LUN.from_config(lun_id, lun_params))
       else:
         key, value = line.strip().split(' ')
         assert(name)
         assert(key not in params)
         params[key] = value
-  if name != None:
+  if name:
     targets[name] = Target.from_config(name, luns, params)
     name   = None
     luns   = []
@@ -216,14 +204,10 @@ def call_ietadm(op, tid, lun=None, sid=None, cid=None, params=None):
   cmdline = ['/usr/sbin/ietadm',
              '--op={}'.format(op),
              '--tid={}'.format(tid)]
-  if lun != None:
-    cmdline.append('--lun={}'.format(lun))
-  if sid != None:
-    cmdline.append('--sid={}'.format(sid))
-  if cid != None:
-    cmdline.append('--cid={}'.format(cid))
-  if params != None:
-    cmdline += ['--params', params]
+  if lun: cmdline.append('--lun={}'.format(lun))
+  if sid: cmdline.append('--sid={}'.format(sid))
+  if cid: cmdline.append('--cid={}'.format(cid))
+  if params: cmdline += ['--params', params]
   process = subprocess.Popen(cmdline, stdout=subprocess.PIPE)
   (stdout, stderr) = process.communicate()
   if process.returncode != 0:
@@ -253,7 +237,7 @@ def build_live_target(volume):
                             'iomode': 'ro'})
   target.luns = [lun]
 
-  call_ietadm('update', tid, params=target.format_params())
+  call_ietadm('update', tid, params=format_params(target.params))
   call_ietadm('new', tid, lun=lun.number, params=lun.format_params())
 
   volume.tid = tid
