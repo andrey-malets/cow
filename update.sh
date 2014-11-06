@@ -176,4 +176,6 @@ echo 'updating iet targets'
 "$BASE/iet.py" "$CONFIG"
 
 echo 'rebooting test host'
-ssh "$TEST_HOST" reboot
+TEST_VM_NAME=${TEST_VM_PATH##*/}
+xm shutdown -w "$TEST_VM_NAME"
+xm create "$TEST_VM_PATH"
