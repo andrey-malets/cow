@@ -173,7 +173,7 @@ umount "$MOUNT_DIR"/{proc,sys,dev/pts,dev,}
 kpartx -v -d "$SNAPSHOT_FILENAME"
 
 echo 'updating iet targets'
-python "$BASE/iet.py" "$CONFIG"
+"$BASE/iet.py" "$CONFIG"
 
 echo 'rebooting test host'
 ssh "$TEST_HOST" reboot
