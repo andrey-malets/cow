@@ -1,0 +1,21 @@
+#!/bin/sh -e
+
+PREREQS=""
+
+prereqs() { echo "$PREREQS"; }
+
+case "$1" in
+    prereqs)
+    prereqs
+    exit 0
+    ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+copy_exec /lib/*/libnss_files.so.*
+copy_exec /lib/*/libnss_dns.so.*
+copy_exec /lib/*/libnss_compat.so.*
+
+mkdir -p "$DESTDIR"/etc
+cp -p /etc/nsswitch.conf "$DESTDIR"/etc
