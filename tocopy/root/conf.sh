@@ -1,8 +1,7 @@
 #!/bin/bash
 
-if [[ -e /dev/mapper/conf ]] && \
-   [[ -e /dev/mapper/sign ]] && \
- ! grep /dev/mapper/conf /proc/mounts; then
+if [[ -e /dev/mapper/conf ]] && [[ -e /dev/mapper/sign ]] && \
+        ! grep /dev/mapper/conf /proc/mounts; then
     CONF=$(mktemp -d)
     if mount /dev/mapper/conf "$CONF"; then
         if [[ "$#" -eq 1 ]]; then
