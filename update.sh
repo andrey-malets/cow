@@ -140,7 +140,8 @@ for fs in proc sys dev dev/pts; do
 done
 
 echo 'installing prerequisites'
-PREREQS_SCRIPT=root/prereqs.sh
+PREREQS_SCRIPT=root/cow/prereqs.sh
+mkdir -p "$MOUNT_DIR"/"$(dirname "$PREREQS_SCRIPT")"
 cp -a "$TO_COPY_DIR"/"$PREREQS_SCRIPT" \
     "$MOUNT_DIR"/"$(dirname "$PREREQS_SCRIPT")"
 chroot "$MOUNT_DIR" "/$PREREQS_SCRIPT"
@@ -157,7 +158,7 @@ ISCSI_TARGET_NAME=$ISCSI_TARGET_NAME
 END
 
 echo 'running update script'
-CHROOT_SCRIPT=/root/update.sh
+CHROOT_SCRIPT=/root/cow/update.sh
 chroot "$MOUNT_DIR" "$CHROOT_SCRIPT"
 
 mkdir -p "$WEB_PATH"
