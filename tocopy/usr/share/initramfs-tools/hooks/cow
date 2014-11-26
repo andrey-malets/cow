@@ -19,8 +19,17 @@ esac
 
 cp /etc/timestamp "$DESTDIR"/etc
 
+cp -r /usr/share/initramfs-tools/cow "$DESTDIR"
+
+copy_exec /bin/bash /bin
+
+copy_exec /bin/cp /bin
+copy_exec /usr/bin/awk /bin
+copy_exec /usr/bin/cmp /bin
+
 copy_exec /sbin/kpartx /sbin
 copy_exec /sbin/mke2fs /sbin
+
 copy_exec /usr/bin/sha1sum /bin
 copy_exec /usr/bin/xxd /bin
 
