@@ -1,0 +1,10 @@
+#!/bin/sh
+
+case "${1}" in
+    prereqs)
+        echo "iscsi"
+        exit 0
+        ;;
+esac
+
+/bin/bash /cow/cow.sh
