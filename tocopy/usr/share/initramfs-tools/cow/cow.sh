@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# set -x
-
 for i in {1..5}; do
     devices=(/sys/class/iscsi_session/*/device/target*/*/block/*)
     ndevices=${#devices[@]}
@@ -19,6 +17,11 @@ ISCSI_SIZE=$(cat "/sys/block/$ISCSI_DEV/size")
 red()    { echo "[0;31;40m$1[0;37;40m"; }
 green()  { echo "[0;32;40m$1[0;37;40m"; }
 yellow() { echo "[0;33;40m$1[0;37;40m"; }
+
+fix_fsmtab() {
+    ln -sf /proc/mounts /etc/mtab
+    echo -n > /etc/fstab
+}
 
 find_space() {
     TARGET_DEV= TARGET_SIZE=0 TARGET_START=0
@@ -149,6 +152,8 @@ update_conf() {
     fi
     return "$rv"
 }
+
+fix_fsmtab
 
 if [[ "$cowtype" == 'mem' ]]; then
     green "forcing memory cow device"
