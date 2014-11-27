@@ -100,17 +100,9 @@ validate_conf_sign() { [[ "$(gen_conf_sign)" == "$(get_conf_sign)" ]]; }
 
 sign_conf() { sync; gen_conf_sign | put_conf_sign; sync; }
 
-setup_memcow() {
+add_memcow() {
     local mem=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
-
-    if [[ "$mem" -gt 500000 ]]; then
-        local rd_size=$((mem*3/4))
-    else
-        local rd_size=$((mem/2))
-    fi
-
-    modprobe brd rd_size=$rd_size rd_nr=1
-    setup_root /dev/ram0
+    modprobe brd "rd_size=$((mem > 500000 ? mem*3/4 : mem/2))" rd_nr=1
 }
 
 setup_root() {
@@ -157,7 +149,8 @@ fix_fsmtab
 
 if [[ "$cowtype" == 'mem' ]]; then
     green "forcing memory cow device"
-    setup_memcow
+    add_memcow
+    COW_ROOT=/dev/ram0
 else
     find_space
     if [[ "$?" -eq 0 ]]; then
@@ -177,9 +170,12 @@ else
             sync
         fi
 
-        setup_root /dev/mapper/cow
+        COW_ROOT=/dev/mapper/cow
     else
-        green "falling back to memory cow device"
-        setup_memcow
+        yellow "falling back to memory cow device"
+        add_memcow
+        COW_ROOT=/dev/ram0
     fi
 fi
+
+setup_root "$COW_ROOT"
