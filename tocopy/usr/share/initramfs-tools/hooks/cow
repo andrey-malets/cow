@@ -23,19 +23,21 @@ cp -r /usr/share/initramfs-tools/cow "$DESTDIR"
 
 copy_exec /bin/bash /bin
 
-copy_exec /bin/chmod /bin
-copy_exec /bin/cp /bin
-copy_exec /bin/mount /bin
+copy_exec /bin/chmod   /bin
+copy_exec /bin/cp      /bin
+copy_exec /bin/ls      /bin
+copy_exec /bin/mount   /bin
 copy_exec /usr/bin/cmp /bin
 
-copy_exec /bin/sed /bin
+copy_exec /bin/sed     /bin
 copy_exec /usr/bin/awk /bin
+copy_exec /usr/bin/wc  /bin
 
 copy_exec /sbin/kpartx /sbin
 copy_exec /sbin/mke2fs /sbin
 
 copy_exec /usr/bin/sha1sum /bin
-copy_exec /usr/bin/xxd /bin
+copy_exec /usr/bin/xxd     /bin
 
 manual_add_modules brd
 manual_add_modules dm_mod
