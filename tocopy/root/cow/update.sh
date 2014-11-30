@@ -11,6 +11,12 @@ rm -rf /home/*
 # clear logs
 find /var/log -type f -delete
 
+# clear MDADM array information
+echo -n > /etc/mdadm/mdadm.conf
+
+# tell MDADM to assemble all of its arrays in initramfs
+augtool -s set /files/etc/default/mdadm/INITRDSTART all
+
 # clear host SSH keys
 # TODO: replace host key with temporary key
 #rm /etc/ssh/ssh_host_{r,d}sa_key{,.pub}

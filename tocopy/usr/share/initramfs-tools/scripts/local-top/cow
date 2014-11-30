@@ -2,7 +2,7 @@
 
 case "${1}" in
     prereqs)
-        echo "iscsi"
+        echo "iscsi mdadm"
         exit 0
         ;;
 esac
