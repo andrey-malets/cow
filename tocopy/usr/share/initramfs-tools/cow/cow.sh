@@ -1,5 +1,7 @@
 #!/bin/bash
 
+shopt -s nullglob
+
 for i in {1..5}; do
     devices=(/sys/class/iscsi_session/*/device/target*/*/block/*)
     ndevices=${#devices[@]}
