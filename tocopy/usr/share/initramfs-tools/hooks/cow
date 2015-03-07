@@ -37,6 +37,8 @@ manual_add_modules brd
 manual_add_modules dm_mod
 manual_add_modules dm_snapshot
 
+manual_add_modules softdog
+
 # erase MDADM generated config and use auto detection
 echo -n > "$DESTDIR/etc/mdadm/mdadm.conf"
 echo -n > "$DESTDIR/conf/mdadm"
