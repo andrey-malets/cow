@@ -42,7 +42,7 @@ panic()
 	if [ -n "${panic}" ]; then
 		echo "Rebooting automatically due to panic= boot argument"
 		sleep ${panic}
-		reboot
+		reboot -f
 	fi
 	modprobe -v i8042 || true
 	modprobe -v atkbd || true
