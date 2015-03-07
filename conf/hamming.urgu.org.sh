@@ -7,8 +7,9 @@ TEST_VM_PATH=/root/xen/image32-test.cfg
 # Host name of test VM, used for graceful reboot, if possible.
 TEST_HOST=image32-test.urgu.org
 
-# FQDN of target host for iSCSI clients
+# FQDN of target host for iSCSI clients and daemon port.
 ISCSI_TARGET_HOST=h.fb.urgu.org
+ISCSI_TARGET_PORT=3261
 
 # Size of snapshot volume used for hosting over iSCSI.
 # Format may be anything accepted by lvcreate.

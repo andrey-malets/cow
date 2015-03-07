@@ -154,6 +154,7 @@ echo 'performing target configuration'
 echo "$TIMESTAMP" > "$MOUNT_DIR"/etc/timestamp
 cat >> "$MOUNT_DIR"/etc/iscsi/iscsi.initramfs <<END
 ISCSI_TARGET_IP=$ISCSI_TARGET_HOST
+ISCSI_TARGET_PORT=$ISCSI_TARGET_PORT
 ISCSI_TARGET_NAME=$ISCSI_TARGET_NAME
 END
 
