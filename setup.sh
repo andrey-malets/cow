@@ -33,6 +33,8 @@ server {
 END
 
     mkdir -p "$WEB_PATH"
+    touch "$WEB_PATH/index.html"
+
     ln -sf "$TARGET" /etc/nginx/sites-enabled
     /etc/init.d/nginx restart
 }
