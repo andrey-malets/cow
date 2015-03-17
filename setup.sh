@@ -27,8 +27,9 @@ setup_nginx() {
 
     cat > "$TARGET" <<END
 server {
-    server_name $TARGET_HOST;
-    root        $WEB_PATH;
+    server_name  $TARGET_HOST;
+    root         $WEB_PATH;
+    default_type text/plain;
 }
 END
 
