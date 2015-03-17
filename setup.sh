@@ -6,8 +6,7 @@ install_prereqs() {
 }
 
 setup_nginx() {
-    HOSTNAME=$(hostname -f)
-    CONFIG="$(pwd)/conf/$HOSTNAME.sh"
+    CONFIG="$(dirname "$0")/conf/$(hostname -f).sh"
     TARGET=/etc/nginx/sites-available/cow
 
     if [[ ! -r "$CONFIG" ]]; then
