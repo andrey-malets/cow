@@ -31,7 +31,7 @@ replace() {
 
 replace bin     bash chmod cp ls mount sed
 replace usr/bin cmp awk wc xxd sha1sum
-replace sbin    kpartx mke2fs
+replace sbin    ifconfig kpartx mke2fs
 
 manual_add_modules brd
 manual_add_modules dm_mod

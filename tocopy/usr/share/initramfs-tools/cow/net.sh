@@ -31,7 +31,7 @@ else
         for i in 1 2 3 4 5; do
             for ifpath in "$syspath"/eth*; do
                 if [[ "$(cat $ifpath/speed)" -eq "$speed" ]]; then
-                    local iface="${ifpath##*/}"
+                    iface="${ifpath##*/}"
                     echo "Selected $iface at speed $speed"
                     echo "DEVICE=$iface" >> /conf/initramfs.conf
                     put_down_except "$iface"
