@@ -14,6 +14,10 @@ find /var/log -type f -delete
 # clear MDADM array information
 echo -n > /etc/mdadm/mdadm.conf
 
+# clear udev net and net generator rules
+rm -f /etc/udev/rules.d/*net.rules \
+      /lib/udev/rules.d/*net-generator.rules
+
 # tell MDADM to assemble all of its arrays in initramfs
 augtool -s set /files/etc/default/mdadm/INITRDSTART all
 
