@@ -15,7 +15,7 @@ load_config() {
         . "$config"
     fi
 
-    opts=(WEB_PATH TARGET_HOST ISCSI_TARGET_PORT)
+    local opts=(WEB_PATH TARGET_HOST ISCSI_TARGET_PORT)
     for opt in "${opts[@]}"; do
         if [[ -z "${!opt}" ]]; then
             echo "$opt must be configured" 1>&2
