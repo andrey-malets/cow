@@ -70,6 +70,11 @@ volume_closed() {
   [[ "${attrs:5:1}" == '-' ]]
 }
 
+domain_shuts_down() {
+    xl list | tail -n+2 | awk '{print $1}' | grep -qw "$1"
+    [[ "$?" -eq 1 ]]
+}
+
 wait_for() {
   local tries=$1
   shift
@@ -81,13 +86,14 @@ wait_for() {
 }
 
 echo "shutting down $REF_VM_NAME"
-xm shutdown -w "$REF_VM_NAME"
+xl shutdown -w "$REF_VM_NAME"
+wait_for 5 domain_shuts_down "$REF_VM_NAME"
 
 wait_for 3 volume_closed "$REF_VM_DISK"
 if [[ "$?" -ne 0 ]]; then
   echo "timed out while waiting for $REF_VM_DISK to free" 1>&2
   echo "starting $REF_VM_NAME back" 1>&2
-  xm create "$REF_VM_NAME"
+  xl create "$REF_VM_NAME"
   exit 1
 else
   echo "adding snapshot $SNAPSHOT_FILENAME"
@@ -95,7 +101,7 @@ else
 fi
 
 echo "starting $REF_VM_NAME back" 1>&2
-xm create "$REF_VM_PATH"
+xl create "$REF_VM_PATH"
 
 get_kpartx_name() {
   local volume=$1
@@ -179,5 +185,6 @@ echo 'updating iet targets'
 
 echo 'rebooting test host'
 TEST_VM_NAME=${TEST_VM_PATH##*/}
-xm shutdown -w "$TEST_VM_NAME"
-xm create "$TEST_VM_PATH"
+xl shutdown -w "$TEST_VM_NAME"
+wait_for 5 domain_shuts_down "$TEST_VM_NAME"
+xl create "$TEST_VM_PATH"

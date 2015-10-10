@@ -6,7 +6,7 @@ def get_disks(filename):
     exec(conf_file.read(), config)
 
   disks = []
-  diskre = "phy:/(.+?),"
+  diskre = "(.+?),raw"
   for disk in config.get("disk", []):
     res = re.match(diskre, disk)
     if res != None:
