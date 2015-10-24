@@ -31,7 +31,8 @@ sed -i 's/^PREREQ=""/PREREQ="net"/' \
 update-initramfs -u
 
 update-rc.d -f open-iscsi  remove
-update-rc.d -f hostname.sh remove
+
+rm /etc/hostname
 
 insserv cond-mkfs.sh
 sed -i 's/+mountall /+cond-mkfs +mountall /' /etc/insserv.conf
