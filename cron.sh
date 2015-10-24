@@ -4,7 +4,7 @@ BASE=$(dirname "$0")
 CONFIG="$BASE/conf/$(hostname -f).sh"
 
 locked() {
-  flock "$BASE" "$@"
+  flock -n -E 10 "$BASE" "$@"
 }
 
 silent() {
