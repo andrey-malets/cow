@@ -1,0 +1,5 @@
+40 6 * * * root /root/cow/cron.sh new /root/cow/conf/host/hamming.urgu.org.sh /root/cow/conf/image/image64.urgu.org.sh
+0  * * * * root /root/cow/cron.sh cleanup /root/cow/conf/host/hamming.urgu.org.sh /root/cow/conf/image/image64.urgu.org.sh
+
+50 6 * * * root /root/cow/cron.sh new /root/cow/conf/host/hamming.urgu.org.sh /root/cow/conf/image/image32.urgu.org.sh
+0  * * * * root /root/cow/cron.sh cleanup /root/cow/conf/host/hamming.urgu.org.sh /root/cow/conf/image/image32.urgu.org.sh
