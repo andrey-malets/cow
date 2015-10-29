@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 
 BASE=$(dirname "$0")
-CONFIG="$BASE/conf/$(hostname -f).sh"
 
 locked() {
-  flock -n -E 10 "$BASE" "$@"
+  lockfile=$1; shift
+  (
+      flock -n -E 10 9 || exit 1
+      "$@"
+      flock -u 9
+  ) 9< "$lockfile"
 }
 
 silent() {
@@ -15,20 +19,28 @@ silent() {
   return "$rv"
 }
 
-if [[ ! -f "$CONFIG" ]]; then
-  echo "no config file: $CONFIG"
+usage() {
+  echo "usage: $1 {new,cleanup} <host config> <image config>" >&2
   exit 1
-fi
+}
 
-case "$1" in
+if [[ "$#" -ne 3 ]]; then usage "$0"; fi
+
+ACTION=$1
+HOST_CONFIG=$2
+IMAGE_CONFIG=$3
+
+if [[ ! -f "$HOST_CONFIG" ]] || [[ ! -f "$IMAGE_CONFIG" ]]; then usage "$0"; fi
+
+case "$ACTION" in
   new)
-    silent locked "$BASE/update.sh" "$CONFIG"
+    silent locked "$HOST_CONFIG" \
+        "$BASE/update.sh" "$HOST_CONFIG" "$IMAGE_CONFIG"
   ;;
   cleanup)
-    silent locked "$BASE/iet.py" "$CONFIG"
+    silent locked "$HOST_CONFIG" "$BASE/iet.py" "$IMAGE_CONFIG"
   ;;
   *)
-    echo "usage: $0 {new,cleanup}"
-    exit 1
+    usage "$0"
   ;;
 esac

@@ -7,12 +7,6 @@ TEST_VM_PATH=/root/xen/image32-test.cfg
 # Host name of test VM, used for graceful reboot, if possible.
 TEST_HOST=image32-test.urgu.org
 
-# Target host for iSCSI daemon and web server.
-TARGET_HOST=h.fb.urgu.org
-
-# Port used to connect to iSCSI daemon.
-ISCSI_TARGET_PORT=3261
-
 # Size of snapshot volume used for hosting over iSCSI.
 # Format may be anything accepted by lvcreate.
 SNAPSHOT_SIZE=5G
@@ -21,7 +15,3 @@ SNAPSHOT_SIZE=5G
 # VM disk snapshots to differ it from another disks. Do not
 # mix with test vm name!
 TIMESTAMP_SUFFIX=at-
-
-# A path where vmlinuz and initrd files will be served by
-# a web server for network booting.
-WEB_PATH=/var/lib/cow

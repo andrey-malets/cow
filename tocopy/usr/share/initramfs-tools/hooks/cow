@@ -29,9 +29,9 @@ replace() {
     done
 }
 
-replace bin     bash chmod cp ls mount sed
-replace usr/bin cmp awk wc xxd sha1sum
-replace sbin    ifconfig kpartx mke2fs
+replace bin      bash chmod cp date ls mount rm sed touch
+replace usr/bin  cmp awk wc xxd sha1sum
+replace sbin     ifconfig kpartx mke2fs
 
 manual_add_modules brd
 manual_add_modules dm_mod

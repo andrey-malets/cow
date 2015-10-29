@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # disable puppet and remove it's monitoring file
-sed -i 's/^START=yes$/START=no/' /etc/default/puppet
+puppet agent --disable
 rm /var/lib/puppet/ssl/{certs,public_keys,private_keys}/*
 rm -f /usr/local/puppet.random
 
@@ -30,7 +30,7 @@ sed -i 's/^PREREQ=""/PREREQ="net"/' \
   /usr/share/initramfs-tools/scripts/local-top/iscsi
 update-initramfs -u
 
-update-rc.d -f open-iscsi  remove
+update-rc.d -f open-iscsi remove
 
 rm /etc/hostname
 

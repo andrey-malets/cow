@@ -1,43 +1,61 @@
 #!/bin/bash
 
+set -e
+
+config_name() {
+    local base_name=$(basename "$1")
+    echo "${base_name%%.sh}"
+}
+
 install_prereqs() {
-    packages=(nginx kpartx iscsitarget iscsitarget-dkms)
+    local packages=(nginx kpartx iscsitarget iscsitarget-dkms)
     apt-get -y install "${packages[@]}"
 }
 
-load_config() {
-    local config="$(dirname "$0")/conf/$(hostname -f).sh"
+load_host_config() {
+    local config=$1
 
     if [[ ! -r "$config" ]]; then
-        echo "cannot read $config" 1>&2
+        echo "cannot read host config $config" 1>&2
         exit 1
     else
         . "$config"
     fi
 
-    local opts=(WEB_PATH TARGET_HOST ISCSI_TARGET_PORT)
+    local opts=(TARGET_HOST ISCSI_TARGET_PORT WEB_PATH)
     for opt in "${opts[@]}"; do
         if [[ -z "${!opt}" ]]; then
             echo "$opt must be configured" 1>&2
             exit 1
         fi
     done
-
 }
 
 setup_nginx() {
-    local target=/etc/nginx/sites-available/cow
+    local target=$1; shift
 
-    cat > "$target" <<END
+    {
+        cat <<END
 server {
     server_name  $TARGET_HOST;
-    root         $WEB_PATH;
     default_type text/plain;
+END
+        for image_config in "$@"; do
+            local name=$(config_name "$image_config")
+            local path="$WEB_PATH/$name"
+            mkdir -p "$path"
+            touch "$path/imdex.html"
+            cat <<END
+
+    location /$name/ {
+        root $WEB_PATH;
+    }
+END
+        done
+        cat <<END
 }
 END
-
-    mkdir -p "$WEB_PATH"
-    touch "$WEB_PATH/index.html"
+    } > "$target"
 
     ln -sf "$target" /etc/nginx/sites-enabled
     /etc/init.d/nginx restart
@@ -50,12 +68,19 @@ ISCSITARGET_ENABLE=true
 ISCSITARGET_OPTIONS="-p $ISCSI_TARGET_PORT"
 END
     for i in {1..3}; do
-        /etc/init.d/iscsitarget restart && break
+        service iscsitarget restart && break
     done
 }
 
-load_config
+if [[ "$#" -lt 2 ]]; then
+    echo "usage: $0 <host config> <image config...>" >&2
+    exit 1
+fi
+
+host_config=$1; shift
 
 install_prereqs
-setup_nginx
+
+load_host_config "$host_config"
+setup_nginx /etc/nginx/sites-available/cow "$@"
 setup_ietd

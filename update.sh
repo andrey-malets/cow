@@ -4,14 +4,22 @@
 
 BASE=$(dirname "$0")
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
-CONFIG=${1:?no config file}
+HOST_CONFIG=${1:?no host config file}
+IMAGE_CONFIG=${2:?no image config file}
 
-if [[ ! -r "$CONFIG" ]]; then
-  echo "cannot read $CONFIG" 1>&2
-  exit 1
-else
-  . "$CONFIG"
-fi
+for CONFIG in "$HOST_CONFIG" "$IMAGE_CONFIG"; do
+    if [[ ! -r "$CONFIG" ]]; then
+      echo "cannot read $CONFIG" 1>&2
+      exit 1
+    else
+      . "$CONFIG"
+    fi
+done
+
+config_name() {
+    local base_name=$(basename "$1")
+    echo "${base_name%%.sh}"
+}
 
 get_ref_vm_disk_filename() {
   if [[ ! -r "$REF_VM_PATH" ]]; then
@@ -89,11 +97,11 @@ echo "shutting down $REF_VM_NAME"
 xl shutdown -w "$REF_VM_NAME"
 wait_for 5 domain_shuts_down "$REF_VM_NAME"
 
-wait_for 3 volume_closed "$REF_VM_DISK"
+wait_for 5 volume_closed "$REF_VM_DISK"
 if [[ "$?" -ne 0 ]]; then
   echo "timed out while waiting for $REF_VM_DISK to free" 1>&2
   echo "starting $REF_VM_NAME back" 1>&2
-  xl create "$REF_VM_NAME"
+  xl create "$REF_VM_PATH"
   exit 1
 else
   echo "adding snapshot $SNAPSHOT_FILENAME"
@@ -146,11 +154,12 @@ for fs in proc sys dev dev/pts; do
 done
 
 echo 'installing prerequisites'
-PREREQS_SCRIPT=root/cow/prereqs.sh
-mkdir -p "$MOUNT_DIR"/"$(dirname "$PREREQS_SCRIPT")"
-cp -a "$TO_COPY_DIR"/"$PREREQS_SCRIPT" \
-    "$MOUNT_DIR"/"$(dirname "$PREREQS_SCRIPT")"
-chroot "$MOUNT_DIR" "/$PREREQS_SCRIPT"
+PREREQS=(root/cow/{fake,prereqs.sh})
+for PREREQ in "${PREREQS[@]}"; do
+    mkdir -p "$MOUNT_DIR"/"$(dirname "$PREREQ")"
+    cp -a "$TO_COPY_DIR"/"$PREREQ" "$MOUNT_DIR"/"$(dirname "$PREREQ")"
+done
+chroot "$MOUNT_DIR" "/root/cow/prereqs.sh"
 
 echo 'copying files'
 TO_COPY_DIR="$BASE/tocopy"
@@ -168,13 +177,13 @@ echo 'running update script'
 CHROOT_SCRIPT=/root/cow/update.sh
 chroot "$MOUNT_DIR" "$CHROOT_SCRIPT"
 
-mkdir -p "$WEB_PATH"
+WEB_TARGET="$WEB_PATH/$(config_name "$IMAGE_CONFIG")"
 for file in vmlinuz initrd.img; do
     link=$(readlink "$MOUNT_DIR/$file")
-    cp "$MOUNT_DIR/${link##/}" "$WEB_PATH/$file"
+    cp "$MOUNT_DIR/${link##/}" "$WEB_TARGET/$file"
 done
-echo "$TIMESTAMP" > "$WEB_PATH/timestamp"
-chroot "$MOUNT_DIR" dpkg-query -W -f='${Package}(${Version}) ' > "$WEB_PATH/pkgs"
+echo "$TIMESTAMP" > "$WEB_TARGET/timestamp"
+chroot "$MOUNT_DIR" dpkg-query -W -f='${Package}(${Version}) ' > "$WEB_TARGET/pkgs"
 
 echo 'cleaning up'
 umount "$MOUNT_DIR"/{proc,sys,dev/pts,dev,}

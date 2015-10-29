@@ -317,7 +317,7 @@ def error(msg):
 
 if __name__ == '__main__':
   if len(sys.argv) != 2:
-    error("usage: {} <config>".format(sys.argv[0]))
+    error("usage: {} <image config>".format(sys.argv[0]))
   config = sys.argv[1]
   disk_pattern = get_disk_pattern(config)
 

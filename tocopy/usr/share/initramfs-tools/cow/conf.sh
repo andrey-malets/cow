@@ -5,8 +5,8 @@ cp /etc/resolv.conf "$rootmnt/etc/"
 mount -o ro,remount "$rootmnt"
 
 if [[ -e /dev/mapper/conf ]]; then
-    pconf="$rootmnt/etc/default/puppet"
-    if [[ -f "$pconf" ]]; then
+    puppet="$rootmnt/var/lib/puppet"
+    if [[ -d "$puppet" ]]; then
         . /run/net-*.conf
 
         fqdn="$HOSTNAME.$DNSDOMAIN"
@@ -25,12 +25,12 @@ if [[ -e /dev/mapper/conf ]]; then
                 for spec in "${files[@]}"; do
                     file=${spec%% *} mode=${spec##* }
                     src="/tmp/conf/puppet/$file"
-                    dst="$rootmnt/var/lib/puppet/ssl/$file"
+                    dst="$puppet/ssl/$file"
                     mkdir -p "${dst%/*}"
                     chmod "$mode" "${dst%/*}"
                     cp "$src" "$dst"
                 done
-                sed -i 's/^START=no$/START=yes/' "$pconf"
+                rm -f "$puppet/state/agent_disabled.lock"
             )
             mount -o ro,remount "$rootmnt"
         fi
