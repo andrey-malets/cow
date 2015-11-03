@@ -1,31 +1,35 @@
 #!/bin/bash
 
-if [[ -e /dev/mapper/conf ]] && [[ -e /dev/mapper/sign ]] && \
-        ! grep /dev/mapper/conf /proc/mounts; then
-    CONF=$(mktemp -d)
-    if mount /dev/mapper/conf "$CONF"; then
+. /etc/cow.conf
+CONF="/dev/disk/by-partlabel/${PARTITION_NAMES[conf]}"
+SIGN="/dev/disk/by-partlabel/${PARTITION_NAMES[sign]}"
+
+if [[ -b "$CONF" ]] && [[ -b "$SIGN" ]] && \
+        ! grep "$(readlink -f $CONF)" /proc/mounts; then
+    CONF_MNT=$(mktemp -d)
+    if mount "$CONF" "$CONF_MNT"; then
         if [[ "$#" -eq 1 ]]; then
-            "$1" "$CONF"
+            "$1" "$CONF_MNT"
         else
             declare -a cmdline
             for ((i=1; i != $#+1; ++i)); do
-                cmdline[i-1]="${!i/\{\}/$CONF}"
+                cmdline[i-1]="${!i/\{\}/$CONF_MNT}"
             done
             "${cmdline[@]}"
         fi
         rv=$?
-        umount "$CONF"
-        rmdir "$CONF"
+        umount "$CONF_MNT"
+        rmdir "$CONF_MNT"
 
         sync
-        dd if=/dev/mapper/conf count=2047 2>/dev/null | \
+        dd "if=$CONF" 2>/dev/null | \
             sha1sum | cut -f1 -d' ' | xxd -r -p | \
-            dd of=/dev/mapper/sign bs=20 count=1 2>/dev/null
+            dd "of=$SIGN" bs=20 count=1 2>/dev/null
         sync
 
         exit "$rv"
     else
-        rmdir "$CONF"
+        rmdir "$CONF_MNT"
         exit 20
     fi
 else

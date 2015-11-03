@@ -4,25 +4,24 @@ set -e
 
 PREREQ="mdadm busybox"
 
-prereqs () {
+prereqs() {
 	echo "${PREREQ}"
 }
 
-case "${1}" in
+case "$1" in
 	prereqs)
 		prereqs
 		exit 0
-		;;
+    ;;
 esac
 
 . /usr/share/initramfs-tools/hook-functions
 
-cp /etc/timestamp "$DESTDIR"/etc
-
 cp -r /usr/share/initramfs-tools/cow "$DESTDIR"
+cp /etc/timestamp /etc/cow.conf "$DESTDIR"/etc
 
 replace() {
-    local prefix="$1"; shift
+    local prefix=$1; shift
     for file in "$@"; do
         rm -f "$DESTDIR/bin/$file"
         copy_exec "/$prefix/$file" /bin
@@ -31,7 +30,7 @@ replace() {
 
 replace bin      bash chmod cp date ls mount rm sed touch
 replace usr/bin  cmp awk wc xxd sha1sum
-replace sbin     ifconfig kpartx mke2fs
+replace sbin     blockdev ifconfig kpartx mke2fs
 
 manual_add_modules brd
 manual_add_modules dm_mod
@@ -42,5 +41,3 @@ manual_add_modules softdog
 # erase MDADM generated config and use auto detection
 echo -n > "$DESTDIR/etc/mdadm/mdadm.conf"
 echo -n > "$DESTDIR/conf/mdadm"
-
-exit 0

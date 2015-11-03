@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -x
+
 # disable puppet and remove it's monitoring file
 puppet agent --disable
 rm /var/lib/puppet/ssl/{certs,public_keys,private_keys}/*

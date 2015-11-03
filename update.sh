@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# set -x
+set -x
 
 BASE=$(dirname "$0")
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -111,15 +111,43 @@ fi
 echo "starting $REF_VM_NAME back" 1>&2
 xl create "$REF_VM_PATH"
 
+check_partition_table_type() {
+  [[ "$(parted -m "$1" p | head -n2 | tail -n1 | cut -f6 -d:)" == gpt ]]
+}
+
+if ! check_partition_table_type "$REF_VM_DISK"; then
+  echo "ref vm must have GPT disk" 1>&2
+  lvremove -f "$SNAPSHOT_FILENAME"
+  exit 1
+fi
+
+get_partition_number() {
+  local volume=$1
+  output=$(parted -m "$volume" p | tail -n+3 | grep "${PARTITION_NAMES[base]}")
+  if [[ -z "$output" ]] || [[ "$(echo -n "$output" | wc -l)" -ne 0 ]]; then
+    echo "there should be exactly one ${PARTITION_NAMES[base]}" \
+         "on $REF_VM_DISK" 1>&2
+    return 1
+  fi
+  cut -f1 -d: <<< "$output"
+}
+
 get_kpartx_name() {
   local volume=$1
-  if [[ "$(kpartx -l "$volume" | wc -l)" -ne 1 ]]; then
-    echo "only single-volume VMs are supported" 1>&2
+  number=$(get_partition_number "$volume")
+  if [[ "$?" -ne 0 ]]; then
     return 1
   else
-    kpartx -l "$volume" | cut -f1 -d' '
+    kpartx -l "$volume" | tail -n+"$number" | head -n1 | cut -f1 -d' '
   fi
 }
+
+PARTITION_NUMBER=$(get_partition_number "$SNAPSHOT_FILENAME")
+if [[ "$?" -ne 0 ]]; then
+  echo "failed to get partition number for $SNAPSHOT_FILENAME" 1>&2
+  lvremove -f "$SNAPSHOT_FILENAME"
+  exit 1
+fi
 
 KPARTX_NAME=$(get_kpartx_name "$SNAPSHOT_FILENAME")
 if [[ "$?" -ne 0 ]]; then
@@ -130,12 +158,15 @@ fi
 
 KPARTX_FILENAME="/dev/mapper/$KPARTX_NAME"
 
-kpartx_volume() {
-  [[ -e "$1" ]]
-}
+if ! parted "$SNAPSHOT_FILENAME" \
+    name "$PARTITION_NUMBER" "${PARTITION_NAMES[network]}"; then
+  echo "failed to change partition name for $SNAPSHOT_FILENAME" 1>&2
+  lvremove -f "$SNAPSHOT_FILENAME"
+  exit 1
+fi
 
-kpartx -v -a "$SNAPSHOT_FILENAME"
-if [[ "$?" -ne 0 ]] || ! wait_for 3 kpartx_volume "$KPARTX_FILENAME"; then
+kpartx -s -v -a "$SNAPSHOT_FILENAME"
+if ! [[ -e "$SNAPSHOT_FILENAME" ]]; then
   echo "something wrong with kpartx" 1>&2
   kpartx -d "$SNAPSHOT_FILENAME"
   lvremove -f "$SNAPSHOT_FILENAME"
@@ -172,6 +203,13 @@ ISCSI_TARGET_IP=$TARGET_HOST
 ISCSI_TARGET_PORT=$ISCSI_TARGET_PORT
 ISCSI_TARGET_NAME=$ISCSI_TARGET_NAME
 END
+
+{
+    echo "declare -A PARTITION_NAMES"
+    for name in network local cow conf sign; do
+        echo "PARTITION_NAMES[$name]=${PARTITION_NAMES[$name]}"
+    done
+} > "$MOUNT_DIR"/etc/cow.conf
 
 echo 'running update script'
 CHROOT_SCRIPT=/root/cow/update.sh

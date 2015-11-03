@@ -2,19 +2,28 @@
 
 shopt -s nullglob
 
+. /etc/cow.conf
+part_name() {
+    echo "/dev/disk/by-partlabel/${PARTITION_NAMES[$1]}"
+}
+
+if [[ "$cowsrc" == network ]]; then
+    BASE=$(part_name network)
+else
+    BASE=$(part_name local)
+fi
+DISK_COW=$(part_name cow)
+CONF=$(part_name conf)
+SIGN=$(part_name sign)
+
 for i in {1..5}; do
-    devices=(/sys/class/iscsi_session/*/device/target*/*/block/*)
-    ndevices=${#devices[@]}
-    if [[ "$ndevices" -gt 0 ]]; then break; else sleep 1; fi
+    if [[ -b "$BASE" ]]; then break; else sleep 1; fi
 done
 
-if [[ "$ndevices" -ne 1 ]]; then
-    echo "Need exactly one iSCSI dev, but got $ndevices" &>2
+if ! [[ -b "$BASE" ]]; then
+    echo "Timed out waiting for $BASE"
     exit 1
 fi
-
-ISCSI_DEV=${devices[0]##*/}
-ISCSI_SIZE=$(cat "/sys/block/$ISCSI_DEV/size")
 
 red()    { echo "[0;31;40m$1[0;37;40m"; }
 green()  { echo "[0;32;40m$1[0;37;40m"; }
@@ -25,78 +34,14 @@ fix_fsmtab() {
     echo -n > /etc/fstab
 }
 
-find_space() {
-    TARGET_DEV= TARGET_SIZE=0 TARGET_START=0
-    local start=0 size=0
-
-    for dev in /sys/block/*; do
-        [[ "$dev" == "/sys/block/$ISCSI_DEV" ]] && continue
-
-        local free=1
-        if ls $dev/${dev##/sys/block/}* &>/dev/null; then
-            for part in $dev/${dev##/sys/block/}*; do
-                start=$(cat "$part/start")
-                size=$(cat "$part/size")
-                if [[ "$((start+size))" -gt "$free" ]]; then
-                    free=$((start+size))
-                fi
-            done
-        fi
-
-        size=$(cat "$dev/size")
-        if [[ "$((size-free))" -gt "$TARGET_SIZE" ]]; then
-            TARGET_DEV=$dev
-            TARGET_SIZE=$((size-free))
-            TARGET_START=$free
-        fi
-    done
-
-    if [[ ! -z "$TARGET_DEV" ]] && \
-       [[ "$TARGET_SIZE" -gt "$((2*1024*1024*1024/512))" ]]; then # 2 GB
-        TARGET_DEV="${TARGET_DEV##/sys/block/}"
-        green "find_space: ${TARGET_DEV}, start: $TARGET_START, size: $TARGET_SIZE"
-        return 0
-    else
-        red   "find_space: no suitable disks found"
-        return 1
-    fi
-}
-
 add_part() { dmsetup create "$1" --table "$2"; }
 
-setup_partitions() {
-    CONF_SIZE=2047
-    COW_SIZE="$((ISCSI_SIZE/2))"
-    if [[ "$TARGET_SIZE" -lt "$((1+CONF_SIZE+COW_SIZE))" ]]; then
-        COW_SIZE="$((TARGET_SIZE-1-CONF_SIZE))"
-    fi
-
-    PLACE_SIZE="$((TARGET_SIZE-1-CONF_SIZE-COW_SIZE))"
-    local target="/dev/$TARGET_DEV"
-
-    set -e
-        add_part sign "0 1 linear $target $TARGET_START"
-        add_part conf "0 $CONF_SIZE linear $target $((TARGET_START+1))"
-        add_part cow  "0 $COW_SIZE linear $target $((TARGET_START+1+CONF_SIZE))"
-    set +e
-
-    if [[ "$PLACE_SIZE" -ne 0 ]]; then
-        set -e
-            add_part place "0 $PLACE_SIZE linear \
-                $target $((TARGET_START+1+CONF_SIZE+COW_SIZE))"
-        set +e
-    fi
-
-    green "cow: $COW_SIZE, place: $PLACE_SIZE"
-}
-
 gen_conf_sign() {
-    dd if=/dev/mapper/conf "count=$CONF_SIZE" \
-        2>/dev/null | sha1sum | awk '{print $1}'
+    dd "if=$CONF" 2>/dev/null | sha1sum | awk '{print $1}'
 }
 
-get_conf_sign() { dd if=/dev/mapper/sign bs=20 count=1 2>/dev/null | xxd -p; }
-put_conf_sign() { xxd -r -p | dd of=/dev/mapper/sign bs=20 count=1 2>/dev/null; }
+get_conf_sign() { dd "if=$SIGN" bs=20 count=1 2>/dev/null | xxd -p; }
+put_conf_sign() { xxd -r -p | dd of="$SIGN" bs=20 count=1 2>/dev/null; }
 
 validate_conf_sign() { [[ "$(gen_conf_sign)" == "$(get_conf_sign)" ]]; }
 
@@ -108,30 +53,32 @@ add_memcow() {
 }
 
 setup_root() {
+    local base=$1 snapshot=$2
+    local size=$(blockdev --getsize64 "$base")
     set -e
-        add_part root "0 $ISCSI_SIZE snapshot /dev/$ISCSI_DEV $1 P 64"
-        kpartx -a /dev/mapper/root
+        add_part root "0 $((size/512)) snapshot $base $snapshot P 64"
     set +e
 }
 
 update_conf() {
     local force_reset=$1
-    local mount='mount -t ext2' conf_mp=/tmp/conf conf_part=/dev/mapper/conf
+    local mount=(mount -t ext2)
+    local conf_mp=/tmp/conf
     local rv=0
 
     update_timestamp() {
         cp /etc/timestamp "$conf_mp"
         umount "$conf_mp"
         sign_conf
-        $mount -o ro "$conf_part" "$conf_mp"
+        "${mount[@]}" -o ro "$CONF" "$conf_mp"
     }
 
-    if validate_conf_sign && $mount -o ro "$conf_part" "$conf_mp"; then
+    if validate_conf_sign && "${mount[@]}" -o ro "$CONF" "$conf_mp"; then
         if [[ "$force_reset" -eq 1 ]] || \
          ! cmp "$conf_mp"/timestamp /etc/timestamp &>/dev/null; then
             rv=1
             set -e
-                $mount -o rw,remount "$conf_part" "$conf_mp"
+                "${mount[@]}" -o rw,remount "$CONF" "$conf_mp"
                 update_timestamp
             set +e
         fi
@@ -139,11 +86,22 @@ update_conf() {
         red "corrupt config partition, resetting"
         rv=1
         set -e
-            mke2fs "$conf_part" &>/dev/null
-            $mount "$conf_part" "$conf_mp"
+            mke2fs "$CONF" &>/dev/null
+            "${mount[@]}" "$CONF" "$conf_mp"
             update_timestamp
         set +e
     fi
+    return "$rv"
+}
+
+check_partitions() {
+    rv=0
+    for part in "$DISK_COW" "$CONF" "$SIGN"; do
+        if ! [[ -b "$part" ]]; then
+            yellow "$part not found"
+            rv=1
+        fi
+    done
     return "$rv"
 }
 
@@ -152,12 +110,9 @@ fix_fsmtab
 if [[ "$cowtype" == 'mem' ]]; then
     green "forcing memory cow device"
     add_memcow
-    COW_ROOT=/dev/ram0
+    COW=/dev/ram0
 else
-    find_space
-    if [[ "$?" -eq 0 ]]; then
-        setup_partitions
-
+    if check_partitions; then
         mkdir /tmp/conf
 
         [[ "$cowtype" != 'clear' ]]
@@ -168,16 +123,16 @@ else
 
         if [[ "$need_reset" -ne 0 ]] || [[ "$conf_updated" -ne 0 ]]; then
             yellow "resetting cow partition"
-            dd if=/dev/zero of=/dev/mapper/cow count=1 conv=notrunc 2>/dev/null
+            dd if=/dev/zero "of=$DISK_COW" count=1 conv=notrunc 2>/dev/null
             sync
         fi
 
-        COW_ROOT=/dev/mapper/cow
+        COW=$DISK_COW
     else
         yellow "falling back to memory cow device"
         add_memcow
-        COW_ROOT=/dev/ram0
+        COW=/dev/ram0
     fi
 fi
 
-setup_root "$COW_ROOT"
+setup_root "$BASE" "$COW"

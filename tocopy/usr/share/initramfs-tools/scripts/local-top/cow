@@ -1,6 +1,6 @@
 #!/bin/sh
 
-case "${1}" in
+case "$1" in
     prereqs)
         echo "iscsi mdadm"
         exit 0

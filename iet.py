@@ -253,7 +253,9 @@ def parse_config(filename):
   config = {}
   with open(filename, 'r') as conf_file:
     for line in conf_file:
-      if line.strip().startswith('#') or len(line.strip()) == 0:
+      if line.strip().startswith('#') \
+          or len(line.strip()) == 0 \
+          or '=' not in line:
         continue
       key, value = line.strip().split('=', 2)
       config[key] = value

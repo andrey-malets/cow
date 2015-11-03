@@ -1,10 +1,17 @@
 #!/bin/bash
 
-mount -o rw,remount "$rootmnt"
-cp /etc/resolv.conf "$rootmnt/etc/"
-mount -o ro,remount "$rootmnt"
+. /etc/cow.conf
+CONF="/dev/disk/by-partlabel/${PARTITION_NAMES[conf]}"
 
-if [[ -e /dev/mapper/conf ]]; then
+remount() { mount -o "$1,remount" "$rootmnt"; }
+RW=(remount rw)
+RO=(remount ro)
+
+"${RW[@]}"
+cp /etc/resolv.conf "$rootmnt/etc/"
+"${RO[@]}"
+
+if [[ -b "$CONF" ]]; then
     puppet="$rootmnt/var/lib/puppet"
     if [[ -d "$puppet" ]]; then
         . /run/net-*.conf
@@ -19,7 +26,7 @@ if [[ -e /dev/mapper/conf ]]; then
         done
 
         if [[ "$present" -eq 1 ]]; then
-            mount -o rw,remount "$rootmnt"
+            "${RW[@]}"
             (
                 set -e
                 for spec in "${files[@]}"; do
@@ -32,7 +39,7 @@ if [[ -e /dev/mapper/conf ]]; then
                 done
                 rm -f "$puppet/state/agent_disabled.lock"
             )
-            mount -o ro,remount "$rootmnt"
+            "${RO[@]}"
         fi
     fi
     umount /tmp/conf
