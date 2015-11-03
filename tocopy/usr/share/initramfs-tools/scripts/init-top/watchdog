@@ -6,8 +6,8 @@ prereqs() { echo "$PREREQS"; }
 
 case "$1" in
     prereqs)
-    prereqs
-    exit 0
+        prereqs
+        exit 0
     ;;
 esac
 

@@ -6,8 +6,8 @@ prereqs() { echo "$PREREQS"; }
 
 case "$1" in
     prereqs)
-    prereqs
-    exit 0
+        prereqs
+        exit 0
     ;;
 esac
 
@@ -15,9 +15,9 @@ esac
 
 arch=`dpkg-architecture -qDEB_HOST_MULTIARCH`
 
-copy_exec /lib/$arch/libnss_files.so.*
-copy_exec /lib/$arch/libnss_dns.so.*
-copy_exec /lib/$arch/libnss_compat.so.*
+copy_exec /lib/"$arch"/libnss_files.so.*
+copy_exec /lib/"$arch"/libnss_dns.so.*
+copy_exec /lib/"$arch"/libnss_compat.so.*
 
 mkdir -p "$DESTDIR"/etc
 cp -p /etc/nsswitch.conf "$DESTDIR"/etc

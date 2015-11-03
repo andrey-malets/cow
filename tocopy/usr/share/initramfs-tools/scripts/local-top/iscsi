@@ -24,6 +24,7 @@ do_iscsi_login ()
 	done
 	. /scripts/functions
 
+	udevadm settle
 	configure_networking
 
 	modprobe iscsi_tcp

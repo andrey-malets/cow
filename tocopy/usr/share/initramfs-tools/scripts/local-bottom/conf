@@ -1,11 +1,9 @@
 #!/bin/sh
 
-#set -x
-
 case "${1}" in
 	prereqs)
 		exit 0
-		;;
+    ;;
 esac
 
 /bin/bash /cow/conf.sh
