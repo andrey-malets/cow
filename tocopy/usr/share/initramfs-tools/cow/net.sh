@@ -23,12 +23,6 @@ put_down_except() {
     done
 }
 
-if [[ "$cowsrc" != network ]]; then
-    echo 'Booting locally'
-    echo -n > /etc/iscsi.initramfs
-    exit 0
-fi
-
 if [[ "$(ls -1d "$syspath"/eth* | wc -l)" -lt 2 ]]; then
     echo 'Skipping network interface selection'
 else
@@ -51,4 +45,11 @@ else
     # fallback
     echo 'No interface selected'
     exit 1
+fi
+
+if [[ "$cowsrc" != network ]]; then
+    echo 'Booting locally: resetting iSCSI config, configuring network'
+    echo -n > /etc/iscsi.initramfs
+    . /scripts/functions
+    configure_networking
 fi

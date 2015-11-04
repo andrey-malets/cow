@@ -27,9 +27,6 @@ augtool -s set /files/etc/default/mdadm/INITRDSTART all
 # TODO: replace host key with temporary key
 #rm /etc/ssh/ssh_host_{r,d}sa_key{,.pub}
 
-# add net script as a prerequisite for iscsi start in initramfs
-sed -i 's/^PREREQ=""/PREREQ="net"/' \
-  /usr/share/initramfs-tools/scripts/local-top/iscsi
 update-initramfs -u
 
 update-rc.d -f open-iscsi remove

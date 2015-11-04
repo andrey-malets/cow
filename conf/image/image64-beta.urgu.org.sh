@@ -42,3 +42,7 @@ PARTITION_NAMES[cow]=cow-image64-cow
 # disk as cow partition.
 PARTITION_NAMES[conf]=cow-image64-conf
 PARTITION_NAMES[sign]=cow-image64-sign
+
+# The name of partition which will be formatted automatically and
+# mounted to /place directory.
+PARTITION_NAMES[place]=cow-image64-place

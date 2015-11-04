@@ -206,7 +206,7 @@ END
 
 {
     echo "declare -A PARTITION_NAMES"
-    for name in network local cow conf sign; do
+    for name in "${!PARTITION_NAMES[@]}"; do
         echo "PARTITION_NAMES[$name]=${PARTITION_NAMES[$name]}"
     done
 } > "$MOUNT_DIR"/etc/cow.conf
