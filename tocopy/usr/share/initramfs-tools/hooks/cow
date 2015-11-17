@@ -28,15 +28,16 @@ replace() {
     done
 }
 
-replace bin      bash chmod cp date ls mount rm sed touch
+replace bin      bash chmod cp date dd ls mount rm sed touch
 replace usr/bin  cmp awk wc xxd sha1sum
-replace sbin     blockdev ifconfig kpartx mke2fs
+replace sbin     blkid blockdev ifconfig kpartx losetup mke2fs
 
 manual_add_modules brd
 manual_add_modules dm_mod
 manual_add_modules dm_snapshot
 
 manual_add_modules softdog
+manual_add_modules loop
 
 # erase MDADM generated config and use auto detection
 echo -n > "$DESTDIR/etc/mdadm/mdadm.conf"

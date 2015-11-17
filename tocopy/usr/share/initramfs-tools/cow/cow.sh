@@ -47,9 +47,24 @@ validate_conf_sign() { [[ "$(gen_conf_sign)" == "$(get_conf_sign)" ]]; }
 
 sign_conf() { sync; gen_conf_sign | put_conf_sign; sync; }
 
-add_memcow() {
+try_conf_from_image() {
+    local mp=/tmp/conf
+    mkdir -p "$mp"
+
+    local conf_uuid=5c4b0ee9-e5b6-44ce-9247-43103b07a95a
+    local conf_part=$(blkid -U "$conf_uuid")
+    if [[ "$?" -eq 0 ]]; then
+        local image=/tmp/conf_image size=256K
+        dd "if=$conf_part" "of=$image" "bs=$size" count=1
+        modprobe loop
+        mount -o loop "$image" "$mp"
+    fi
+}
+
+setup_memcow() {
     local mem=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
     modprobe brd "rd_size=$((mem > 500000 ? mem*3/4 : mem/2))" rd_nr=1
+    try_conf_from_image
 }
 
 setup_root() {
@@ -109,11 +124,11 @@ fix_fsmtab
 
 if [[ "$cowtype" == 'mem' ]]; then
     green "forcing memory cow device"
-    add_memcow
+    setup_memcow
     COW=/dev/ram0
 else
     if check_partitions; then
-        mkdir /tmp/conf
+        mkdir -p /tmp/conf
 
         [[ "$cowtype" != 'clear' ]]
         need_reset=$?
@@ -130,7 +145,7 @@ else
         COW=$DISK_COW
     else
         yellow "falling back to memory cow device"
-        add_memcow
+        setup_memcow
         COW=/dev/ram0
     fi
 fi
