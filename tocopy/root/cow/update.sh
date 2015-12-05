@@ -31,6 +31,8 @@ update-initramfs -u
 
 update-rc.d -f open-iscsi remove
 
+systemctl enable watchdog.service
+
 rm /etc/hostname
 
 insserv cond-mkfs.sh
