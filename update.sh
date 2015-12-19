@@ -230,7 +230,7 @@ kpartx -v -d "$SNAPSHOT_FILENAME"
 echo 'updating iet targets'
 "$BASE/iet.py" "$CONFIG"
 
-echo 'pushlishing symlink to root partition for deployment'
+echo 'publishing symlink to root partition for deployment'
 kpartx -s -v -a "$SNAPSHOT_FILENAME"
 DEPLOY_TARGET="$WEB_TARGET/${PARTITION_NAMES[local]}"
 ln -sf "$KPARTX_FILENAME" "$DEPLOY_TARGET"
