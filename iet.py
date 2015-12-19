@@ -308,8 +308,8 @@ def free_targets(volumes, targets):
 def free_volumes(volumes):
   for volume in volumes.itervalues():
     if volume.tid == None:
-      cmdline = ['/sbin/lvremove', '-f', volume.path]
-      subprocess.call(cmdline)
+      subprocess.check_call(['/sbin/kpartx', '-d', volume.path])
+      subprocess.check_call(['/sbin/lvremove', '-f', volume.path])
 
 
 def error(msg):
