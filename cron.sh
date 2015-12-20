@@ -4,11 +4,11 @@ BASE=$(dirname "$0")
 
 locked() {
   lockfile=$1; shift
-  (
-      flock -n -E 10 9 || exit 1
-      "$@"
-      flock -u 9
-  ) 9< "$lockfile"
+  flock -n -E 10 -o "$lockfile" "$@"; rv="$?"
+  if [[ "$rv" -eq 10 ]]; then
+    echo "$lockfile is locked now, exiting"
+  fi
+  return "$rv"
 }
 
 silent() {
