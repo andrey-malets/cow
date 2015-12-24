@@ -28,7 +28,7 @@ replace() {
     done
 }
 
-replace bin      bash chmod cp date dd ls mount rm sed touch
+replace bin      bash chmod cp date dd ls mount mountpoint rm sed touch
 replace usr/bin  cmp awk wc xxd sha1sum
 replace sbin     blkid blockdev ifconfig kpartx losetup mke2fs
 

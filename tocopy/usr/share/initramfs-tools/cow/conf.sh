@@ -1,7 +1,6 @@
 #!/bin/bash
 
-. /etc/cow.conf
-CONF="/dev/disk/by-partlabel/${PARTITION_NAMES[conf]}"
+CONF=/tmp/conf
 
 remount() { mount -o "$1,remount" "$rootmnt"; }
 RW=(remount rw)
@@ -11,7 +10,7 @@ RO=(remount ro)
 cp /etc/resolv.conf "$rootmnt/etc/"
 "${RO[@]}"
 
-if [[ -b "$CONF" ]]; then
+if [[ -d "$CONF" ]]; then
     puppet="$rootmnt/var/lib/puppet"
     if [[ -d "$puppet" ]]; then
         . /run/net-*.conf
@@ -22,7 +21,7 @@ if [[ -b "$CONF" ]]; then
 
         present=1
         for spec in "${files[@]}"; do
-            [[ -f "/tmp/conf/puppet/${spec%% *}" ]] || present=0
+            [[ -f "$CONF/puppet/${spec%% *}" ]] || present=0
         done
 
         if [[ "$present" -eq 1 ]]; then
@@ -31,7 +30,7 @@ if [[ -b "$CONF" ]]; then
                 set -e
                 for spec in "${files[@]}"; do
                     file=${spec%% *} mode=${spec##* }
-                    src="/tmp/conf/puppet/$file"
+                    src="$CONF/puppet/$file"
                     dst="$puppet/ssl/$file"
                     mkdir -p "${dst%/*}"
                     chmod "$mode" "${dst%/*}"
@@ -42,5 +41,6 @@ if [[ -b "$CONF" ]]; then
             "${RO[@]}"
         fi
     fi
-    umount /tmp/conf
+
+    if mountpoint "$CONF"; then umount "$CONF"; fi
 fi
