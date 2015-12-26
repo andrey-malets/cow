@@ -43,6 +43,11 @@ PARTITION_NAMES[cow]=cow-image64-cow
 PARTITION_NAMES[conf]=cow-image64-conf
 PARTITION_NAMES[sign]=cow-image64-sign
 
+# This is a name for partition where the image of host Puppet config
+# will be stored. This is used to bootstrap machine while
+# booting into memory.
+PARTITION_NAMES[keyimage]=cow-image64-keyimage
+
 # The name of partition which will be formatted automatically and
 # mounted to /place directory.
 PARTITION_NAMES[place]=cow-image64-place
