@@ -261,7 +261,7 @@ configure_networking()
         fi
 
         for i in "${IPV4DNS0}" "${IPV4DNS1}" "${IPV4DNS2}"; do
-            if [ "$i" != "0.0.0.0" ]; then
+            if [ "$i" != "0.0.0.0" ] && [ "$i" != "" ]; then
                 echo "nameserver $i" >> /etc/resolv.conf
             fi
         done
