@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
 
-[[ "$(cat /sys/class/iscsi_session/*/state)" = 'LOGGED_IN' ]] &&
-    [[ "$(dmesg | grep 'detected conn error' | wc -l)" -eq 0 ]]
+if ! grep -q 'cowsrc=network' /proc/cmdline; then
+    exit 0
+fi
+
+if ! dmesg | grep -q 'detected conn error'; then
+    exit 0
+fi
+
+exit 1
