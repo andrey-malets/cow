@@ -52,7 +52,8 @@ try_conf_from_image() {
     mkdir -p "$mp"
 
     local conf_uuid=5c4b0ee9-e5b6-44ce-9247-43103b07a95a
-    local conf_part=$(blkid -U "$conf_uuid")
+    local conf_part
+    conf_part=$(blkid -U "$conf_uuid")
     if [[ "$?" -eq 0 ]]; then
         local image=/tmp/conf_image size=256K
         dd "if=$conf_part" "of=$image" "bs=$size" count=1
