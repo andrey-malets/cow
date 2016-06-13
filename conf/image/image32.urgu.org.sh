@@ -16,20 +16,23 @@ SNAPSHOT_SIZE=5G
 # mix with test vm name!
 TIMESTAMP_SUFFIX=at-
 
-# The names of partitions system will use for booting
+# The names of partitions system will use for creating COW image
+# and booting it.
 declare -A PARTITION_NAMES
 
+# The name of partition on the base image which will be used to
+# create COW image.
 PARTITION_NAMES[base]=image32-base
 
 # This is a name of partition which must be present in the system
 # (usually mounted over iSCSI) when network boot is selected
 PARTITION_NAMES[network]=cow-image32-net
 
-# This is a partition name which must be present (presumably on
+# The name of partition which must be present (presumably on
 # one of local disks) when local boot is done
 PARTITION_NAMES[local]=cow-image32-local
 
-# This is the a name of special partition for copy-on-write device.
+# The name of special partition for copy-on-write device.
 # This should reside on the local disk and be unique for each
 # machine.
 PARTITION_NAMES[cow]=cow-image32-cow
@@ -39,3 +42,12 @@ PARTITION_NAMES[cow]=cow-image32-cow
 # disk as cow partition.
 PARTITION_NAMES[conf]=cow-image32-conf
 PARTITION_NAMES[sign]=cow-image32-sign
+
+# This is a name for partition where the image of host Puppet config
+# will be stored. This is used to bootstrap machine while
+# booting into memory.
+PARTITION_NAMES[keyimage]=cow-image32-keyimage
+
+# The name of partition which will be formatted automatically and
+# mounted to /place directory.
+PARTITION_NAMES[place]=cow-image32-place
