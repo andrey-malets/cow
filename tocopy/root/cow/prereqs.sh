@@ -1,4 +1,4 @@
-#!/bin/bash -x
+#!/bin/bash -xe
 
 packages=(open-iscsi kpartx puppet dpkg-dev mdadm augeas-tools watchdog)
 
