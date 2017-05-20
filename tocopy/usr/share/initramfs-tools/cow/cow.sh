@@ -16,7 +16,7 @@ DISK_COW=$(part_name cow)
 CONF=$(part_name conf)
 SIGN=$(part_name sign)
 
-for i in {1..5}; do
+for i in {1..15}; do
     if [[ -b "$BASE" ]]; then break; else sleep 1; fi
 done
 
