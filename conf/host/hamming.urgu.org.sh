@@ -1,5 +1,5 @@
 # Target host for iSCSI daemon and web server.
-TARGET_HOST=h.fb.urgu.org
+TARGET_HOST=images.hamming.urgu.org
 
 # Port used to connect to iSCSI daemon.
 ISCSI_TARGET_PORT=3261
