@@ -44,7 +44,7 @@ END
             local name=$(config_name "$image_config")
             local path="$WEB_PATH/$name"
             mkdir -p "$path"
-            touch "$path/imdex.html"
+            touch "$path/index.html"
             cat <<END
 
     location /$name/ {
