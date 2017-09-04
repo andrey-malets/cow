@@ -44,5 +44,5 @@ if [[ -d "$CONF" ]]; then
         fi
     fi
 
-    if mountpoint "$CONF"; then umount "$CONF"; fi
+    if mountpoint "$CONF" > /dev/null; then umount "$CONF"; fi
 fi
