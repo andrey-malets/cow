@@ -12,6 +12,7 @@ cp /etc/resolv.conf "$rootmnt/etc/"
 
 if [[ -d "$CONF" ]]; then
     puppet="$rootmnt/var/lib/puppet"
+    puppet_cache="$rootmnt/var/cache/puppet"
     if [[ -d "$puppet" ]]; then
         . /run/net-*.conf
 
@@ -36,7 +37,8 @@ if [[ -d "$CONF" ]]; then
                     chmod "$mode" "${dst%/*}"
                     cp "$src" "$dst"
                 done
-                rm -f "$puppet/state/agent_disabled.lock"
+                rm -f "$puppet/state/agent_disabled.lock" \
+                      "$puppet_cache/state/agent_disabled.lock"
             )
             "${RO[@]}"
         fi
