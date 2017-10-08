@@ -38,7 +38,8 @@ case "$ACTION" in
         "$BASE/update.sh" "$HOST_CONFIG" "$IMAGE_CONFIG"
   ;;
   cleanup)
-    silent locked "$HOST_CONFIG" "$BASE/iet.py" "$IMAGE_CONFIG"
+    silent locked "$HOST_CONFIG" \
+        "$BASE/cleanup.sh" "$HOST_CONFIG" "$IMAGE_CONFIG"
   ;;
   *)
     usage "$0"

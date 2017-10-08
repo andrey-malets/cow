@@ -42,7 +42,7 @@ get_ref_vm_disk_filename() {
 }
 
 get_timestamp() {
-  echo "${TIMESTAMP_SUFFIX}$(date '+%F_%H-%M-%S')"
+  echo "${TIMESTAMP_SUFFIX}$(date '+%F-%H-%M-%S')"
 }
 
 REF_VM_DISK=$(get_ref_vm_disk_filename)
@@ -65,7 +65,7 @@ if [[ -e "$SNAPSHOT_FILENAME" ]]; then
   exit 1
 fi
 
-ISCSI_TARGET_NAME="$SNAPSHOT_BASENAME"
+ISCSI_TARGET_NAME="iqn.2013-07.org.urgu.$SNAPSHOT_BASENAME"
 
 MOUNT_DIR="$BASE/root"
 TO_COPY_DIR="$BASE/tocopy"
@@ -97,7 +97,7 @@ echo "shutting down $REF_VM_NAME"
 xl shutdown -w "$REF_VM_NAME"
 wait_for 5 domain_shuts_down "$REF_VM_NAME"
 
-wait_for 5 volume_closed "$REF_VM_DISK"
+# wait_for 5 volume_closed "$REF_VM_DISK"
 if [[ "$?" -ne 0 ]]; then
   echo "timed out while waiting for $REF_VM_DISK to free" 1>&2
   echo "starting $REF_VM_NAME back" 1>&2
@@ -227,8 +227,19 @@ echo 'cleaning up'
 umount "$MOUNT_DIR"/{proc,sys,dev/pts,dev,}
 kpartx -v -d "$SNAPSHOT_FILENAME"
 
-echo 'updating iet targets'
-"$BASE/iet.py" "$CONFIG"
+echo 'updating iSCSI targets'
+
+ISCSI_BASENAME="${SNAPSHOT_BASENAME}-iscsi"
+dmsetup create "$ISCSI_BASENAME" --table \
+    "0 $(blockdev --getsz "$SNAPSHOT_FILENAME") linear $SNAPSHOT_FILENAME 0"
+ISCSI_FILENAME="/dev/mapper/$ISCSI_BASENAME"
+
+targetcli /backstores/block create \
+    "dev=$ISCSI_FILENAME" "name=$ISCSI_BASENAME" readonly=True
+targetcli /iscsi create "$ISCSI_TARGET_NAME"
+targetcli "/iscsi/$ISCSI_TARGET_NAME/tpg1/luns/" create \
+    "/backstores/block/$ISCSI_BASENAME"
+targetcli "/iscsi/$ISCSI_TARGET_NAME/tpg1" set attribute generate_node_acls=1
 
 echo 'publishing symlink to root partition for deployment'
 kpartx -s -v -a "$SNAPSHOT_FILENAME"
