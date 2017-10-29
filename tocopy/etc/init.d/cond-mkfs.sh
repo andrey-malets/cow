@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-### BEGIN INIT INFO
-# Provides:          cond-mkfs
-# Required-Start:    checkroot
-# Required-Stop:
-# Default-Start:     S
-# Default-Stop:
-# Short-Description: Make /place filesystem if it does not exist
-# Description:       Conditionally make filesystem for /place
-#                    if it didn't exist before and mount it on /place
-### END INIT INFO
 
 . /etc/cow.conf
 PLACE="/dev/disk/by-partlabel/${PARTITION_NAMES[place]}"
@@ -50,7 +40,10 @@ case "$1" in
     ;;
 
     stop)
-        if [[ -b "$PLACE" ]]; then umount "$MP"; fi
+        if [[ -b "$PLACE" ]]; then
+            echo "Unmounting $MP"
+            umount "$MP"
+        fi
         ;;
     *)
         echo "Usage: cond-mkfs.sh [start|stop]" >&2

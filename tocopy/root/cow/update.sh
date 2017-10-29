@@ -32,9 +32,6 @@ update-initramfs -u
 update-rc.d -f open-iscsi remove
 
 systemctl enable watchdog.service
+systemctl enable mount-place.service
 
-rm /etc/hostname
-rm -f /etc/mailname
-
-insserv cond-mkfs.sh
-sed -i 's/+mountall /+cond-mkfs +mountall /' /etc/insserv.conf
+rm -f /etc/{host,mail}name
