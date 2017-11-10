@@ -4,8 +4,8 @@ Description=Conditionally make and mount filesystem for /place
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/etc/init.d/cond-mkfs.sh start
-ExecStop=/etc/init.d/cond-mkfs.sh stop
+ExecStart=/usr/lib/cow/cond-mkfs.sh start
+ExecStop=/usr/lib/cow/cond-mkfs.sh stop
 
 [Install]
 WantedBy=local-fs.target
