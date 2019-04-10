@@ -93,6 +93,13 @@ wait_for() {
   return 1
 }
 
+no_dpkg_locks() {
+  ssh "$1" '! fuser /var/lib/dpkg/lock'
+}
+
+echo "waiting for dpkg locks in $REF_HOST"
+wait_for 900 no_dpkg_locks "$REF_HOST"
+
 echo "shutting down $REF_VM_NAME"
 xl shutdown -w "$REF_VM_NAME"
 wait_for 5 domain_shuts_down "$REF_VM_NAME"

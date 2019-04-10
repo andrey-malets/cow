@@ -1,6 +1,9 @@
 # Path to the reference VM configuration file for Xen.
 REF_VM_PATH=/root/xen/image32.cfg
 
+# Host name of reference VM, used for graceful reboot, if possible.
+REF_HOST=image32.urgu.org
+
 # Path to the test VM config file for Xen.
 TEST_VM_PATH=/root/xen/image32-test.cfg
 
