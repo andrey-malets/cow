@@ -247,6 +247,7 @@ targetcli /iscsi create "$ISCSI_TARGET_NAME"
 targetcli "/iscsi/$ISCSI_TARGET_NAME/tpg1/luns/" create \
     "/backstores/block/$ISCSI_BASENAME"
 targetcli "/iscsi/$ISCSI_TARGET_NAME/tpg1" set attribute generate_node_acls=1
+targetcli saveconfig
 
 echo 'publishing symlink to root partition for deployment'
 kpartx -s -v -a "$SNAPSHOT_FILENAME"
