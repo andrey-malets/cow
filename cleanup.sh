@@ -69,9 +69,9 @@ for ((i = 0; i != ${#targets[@]} - 1; ++i)); do
     SNAPSHOT_FILENAME="$(dirname $REF_VM_DISK)/$SNAPSHOT_BASENAME"
     ISCSI_BASENAME="${SNAPSHOT_BASENAME}-iscsi"
 
-    kpartx -s -v -d "$SNAPSHOT_FILENAME" || true
     targetcli /iscsi/ delete "$ISCSI_TARGET_NAME" || true
     targetcli /backstores/block delete "$ISCSI_BASENAME" || true
+    kpartx -s -v -d "$SNAPSHOT_FILENAME" || true
     dmsetup remove "$ISCSI_BASENAME" || true
     lvremove -f "$SNAPSHOT_FILENAME"
 done
