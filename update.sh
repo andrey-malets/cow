@@ -28,7 +28,7 @@ get_ref_vm_disk_filename() {
   fi
 
   local disks=()
-  disks=($(python "$BASE/get_disks.py" "$REF_VM_PATH"))
+  disks=($(python3 "$BASE/get_disks.py" "$REF_VM_PATH"))
   if [[ "$?" -ne 0 ]]; then
     echo 'failed to get disk filename for ref vm' 1>&2
     return 1
