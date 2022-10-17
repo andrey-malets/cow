@@ -12,7 +12,7 @@ locked() {
 }
 
 silent() {
-  local allfile="$(tempfile -p cow)"
+  local allfile="$(mktemp -t cowXXXXXX)"
   "$@" >"$allfile" 2>&1; rv="$?"
   [[ "$rv" -ne 0 ]] && cat "$allfile"
   rm "$allfile"
