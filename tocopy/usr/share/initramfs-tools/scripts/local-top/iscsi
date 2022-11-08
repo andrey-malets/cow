@@ -159,6 +159,13 @@ do_iscsi_login ()
 				iface.primary_dns)   IPV4DNS0="${v}" ;;
 				iface.secondary_dns) IPV4DNS1="${v}" ;;
 				iface.net_ifacename) DEVICE="${v}" ;;
+				iface.bootproto)
+					case "${v}" in
+						DHCP)	PROTO="dhcp"   ;;
+						STATIC)	PROTO="static" ;;
+						*)	PROTO="${v}"   ;;
+					esac
+					;;
 			esac
 		done
 	fi
