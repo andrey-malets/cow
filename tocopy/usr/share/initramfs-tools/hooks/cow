@@ -30,7 +30,7 @@ replace() {
 
 replace bin      bash chmod cp date dd ls mount mountpoint rm sed touch
 replace usr/bin  cmp awk wc xxd sha1sum
-replace sbin     blkid blockdev ifconfig kpartx losetup \
+replace sbin     blkid blockdev kpartx losetup \
                  e2fsck fsck logsave mke2fs
 
 for link in fsck.ext2 fsck.ext3 fsck.ext4; do

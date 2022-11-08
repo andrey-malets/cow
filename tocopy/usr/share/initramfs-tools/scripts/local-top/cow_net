@@ -15,4 +15,7 @@ prereqs)
 	;;
 esac
 
-/bin/bash /cow/net.sh
+if [[ "$cowsrc" != network ]]; then
+    . /scripts/functions
+    configure_networking
+fi
