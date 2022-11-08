@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -x
+set -x -e
 
 # disable puppet and remove it's monitoring file
 puppet agent --disable
