@@ -5,10 +5,12 @@ import argparse
 import contextlib
 from dataclasses import dataclass
 import datetime
+import glob
 import json
 import logging
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -50,24 +52,15 @@ def shutdown(host):
     ssh(host, 'shutdown now')
 
 
+def reboot(host):
+    logging.info('Rebooting %s', host)
+    ssh(host, 'reboot')
+
+
 def is_accessible(host):
     logging.info('Checking if %s is accessible', host)
     return ssh(host, 'id', options=('-o', 'ConnectTimeout=1'),
                stdout=subprocess.PIPE) == 0
-
-
-def is_lv_open(name):
-    logging.info('Checking if LV %s is open', name)
-    cmdline = ['lvs', '-o', 'lv_attr', '--noheadings', name]
-    logging.debug('Running %s', cmdline)
-    output = subprocess.check_output(cmdline, text=True).strip()
-    flag = output[5]
-    if flag == '-':
-        return False
-    elif flag == 'o':
-        return True
-    else:
-        raise RuntimeError(f'Cannot parse LV attributes "{output}"')
 
 
 @dataclass(frozen=True)
@@ -248,6 +241,24 @@ def snapshot_name(origin, timestamp):
     return f'{os.path.basename(origin)}-at-{timestamp}'
 
 
+def snapshot_glob(origin):
+    return f'{origin}-at-*'
+
+
+def is_lv_open(name):
+    logging.info('Checking if LV %s is open', name)
+    cmdline = ['lvs', '-o', 'lv_attr', '--noheadings', name]
+    logging.debug('Running %s', cmdline)
+    output = subprocess.check_output(cmdline, text=True).strip()
+    flag = output[5]
+    if flag == '-':
+        return False
+    elif flag == 'o':
+        return True
+    else:
+        raise RuntimeError(f'Cannot parse LV attributes "{output}"')
+
+
 def create_lvm_snapshot(origin, name, size):
     cmdline = ['lvcreate', '-s', '-L', size, '-n', name, origin]
     logging.debug('Running %s', cmdline)
@@ -304,15 +315,19 @@ def chroot(partition):
         yield root
 
 
+def get_disk(vmm, vm):
+    disks = list(vmm.get_disks(vm))
+    if len(disks) != 1:
+        raise RuntimeError('Need exactly one disk for vm, got {disks}')
+    return disks[0]
+
+
 @contextlib.contextmanager
 def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size):
     origin = None
     name = None
     with vm_shut_down(vmm, ref_vm, ref_host):
-        disks = list(vmm.get_disks(ref_vm))
-        if len(disks) != 1:
-            raise RuntimeError('Need exactly one disk for ref vm, got {disks}')
-        ref_lv = disks[0]
+        ref_lv = get_disk(vmm, ref_vm)
         wait_for(lambda: not is_lv_open(ref_lv), timeout=30, step=1)
         origin = ref_lv
         name = snapshot_name(origin, timestamp)
@@ -339,6 +354,9 @@ class VirtualMachineManager(abc.ABC):
     def start(self, name):
         pass
 
+    def reset(self, name):
+        pass
+
     def get_disks(self, name):
         pass
 
@@ -358,6 +376,10 @@ class Virsh(VirtualMachineManager):
     def start(self, name):
         logging.info('Starting %s', name)
         subprocess.check_call(['virsh', 'start', name])
+
+    def reset(self, name):
+        logging.warning('Resetting %s', name)
+        subprocess.check_call(['virsh', 'reset', name])
 
     def get_disks(self, name):
         cmdline = ['virsh', 'dumpxml', name]
@@ -395,37 +417,6 @@ class PartitionsConfig:
     place: str
 
 
-def parse_partitions_config(value):
-    with open(value) as config_input:
-        return PartitionsConfig(**json.load(config_input))
-
-
-def parse_args(raw_args):
-    parser = argparse.ArgumentParser(raw_args[0])
-    parser.add_argument('-v', '--verbose', action='count', default=0)
-    parser.add_argument('-s', '--snapshot-size', default='5G')
-    parser.add_argument('--to-copy', action='append')
-    parser.add_argument('--chroot-script')
-    parser.add_argument('ref_vm')
-    parser.add_argument('ref_host')
-    parser.add_argument('partitions_config', type=parse_partitions_config)
-    parser.add_argument('output')
-
-    return parser.parse_args(raw_args[1:])
-
-
-def configure_logging(args):
-    levels = {
-        0: logging.WARN,
-        1: logging.INFO,
-    }
-    logging.basicConfig(
-        level=levels.get(args.verbose, logging.DEBUG),
-        format='%(asctime)s: %(levelname)-8s ' '%(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-
 def check_preconditions(vmm, ref_vm, ref_host):
     if not vmm.is_vm_running(ref_vm):
         raise RuntimeError(f'Reference vm {ref_vm} is not running')
@@ -452,7 +443,7 @@ def copy_files(root, to_copy):
                 if os.path.exists(dst):
                     logging.debug('Overwriting %s with %s', dst, src)
                 else:
-                    logging.debug('Copying %s with %s', src, dst)
+                    logging.debug('Copying %s to %s', src, dst)
                 shutil.copy2(src, dst)
 
 
@@ -479,24 +470,272 @@ def run_chroot_script(root, script):
         subprocess.check_call(cmdline)
 
 
-def publish_kernel_images(root, output):
-    logging.info('Publishing kernel images to %s', output)
-    for file_ in ('vmlinuz', 'initrd.img'):
-        shutil.copy(os.path.join(root, file_), output)
+def snapshot_artifacts_path(output, snapshot_disk):
+    return os.path.join(output, os.path.basename(snapshot_disk))
 
 
-def main(raw_args):
-    args = parse_args(raw_args)
-    configure_logging(args)
+@contextlib.contextmanager
+def snapshot_artifacts(output, snapshot_disk):
+    path = snapshot_artifacts_path(output, snapshot_disk)
+    assert not os.path.exists(path)
+    logging.info('Creating snapshot artifacts directory %s', path)
+    os.makedirs(path)
+    try:
+        yield path
+    except Exception:
+        shutil.rmtree(path)
+        raise
 
+
+def publish_kernel_images(root, artifacts):
+    logging.info('Publishing kernel images to %s', artifacts)
+    return tuple(
+        shutil.copy2(os.path.join(root, file_), artifacts)
+        for file_ in ('vmlinuz', 'initrd.img')
+    )
+
+
+def remove_iscsi_backstore(name):
+    cmdline = ['targetcli', '/backstores/block', 'delete', name]
+    logging.info('Removing iSCSI backstore: %s', cmdline)
+    subprocess.check_call(cmdline)
+
+
+def get_iscsi_backstore_name(device):
+    return os.path.basename(device)
+
+
+@contextlib.contextmanager
+def create_iscsi_backstore(device):
+    name = get_iscsi_backstore_name(device)
+    cmdline = ['targetcli', '/backstores/block', 'create',
+               f'dev={device}', f'name={name}', 'readonly=True']
+    logging.info('Adding iSCSI backstore: %s', cmdline)
+    subprocess.check_call(cmdline)
+    try:
+        yield name
+    except Exception:
+        try:
+            remove_iscsi_backstore(name)
+        except Exception:
+            logging.exception(f'Failed to remove iSCSI backstore {name}')
+        raise
+
+
+def remove_iscsi_target(name):
+    cmdline = ['targetcli', '/iscsi', 'delete', name]
+    logging.info('Removing iSCSI target: %s', cmdline)
+    subprocess.check_call(cmdline)
+
+
+def attach_backstore_to_iscsi_target(target_name, backstore_name):
+    cmdline = ['targetcli', f'/iscsi/{target_name}/tpg1/luns', 'create',
+               f'/backstores/block/{backstore_name}']
+    logging.info('Adding iSCSI LUN: %s', cmdline)
+    subprocess.check_call(cmdline)
+
+
+def get_iscsi_target_name(backstore_name):
+    return f'iqn.2013-07.cow.{backstore_name}'
+
+
+@contextlib.contextmanager
+def create_iscsi_target(backstore_name):
+    target_name = get_iscsi_target_name(backstore_name)
+    cmdline = ['targetcli', '/iscsi', 'create', target_name]
+    logging.info('Adding iSCSI target: %s', cmdline)
+    subprocess.check_call(cmdline)
+
+    try:
+        attach_backstore_to_iscsi_target(target_name, backstore_name)
+        yield target_name
+    except Exception:
+        try:
+            remove_iscsi_target(target_name)
+        except Exception:
+            logging.exception(f'Failed to remove iSCSI target {target_name}')
+        raise
+
+
+def configure_authentication(target_name):
+    cmdline = ['targetcli', f'/iscsi/{target_name}/tpg1', 'set', 'attribute',
+               'generate_node_acls=1']
+    logging.info('Configuring iSCSI authentication: %s', cmdline)
+    subprocess.check_call(cmdline)
+
+
+def save_iscsi_config():
+    cmdline = ['targetcli', 'saveconfig']
+    logging.debug('Saving iSCSI configuration: %s', cmdline)
+    subprocess.check_call(cmdline)
+
+
+@contextlib.contextmanager
+def publish_to_iscsi(device):
+    try:
+        with contextlib.ExitStack() as stack:
+            backstore_name = stack.enter_context(
+                create_iscsi_backstore(device)
+            )
+            target_name = stack.enter_context(
+                create_iscsi_target(backstore_name)
+            )
+            configure_authentication(target_name)
+            save_iscsi_config()
+            yield target_name
+    except Exception:
+        try:
+            save_iscsi_config()
+        except Exception:
+            logging.exception('Failed to save iSCSI config')
+        raise
+
+
+def ipxe_config_filename(output, iscsi_target_name):
+    return os.path.join(output, f'{iscsi_target_name}.ipxe')
+
+
+@contextlib.contextmanager
+def generate_ipxe_config(output, iscsi_target_name, kernel, initrd):
+    kernel_path = os.path.relpath(kernel, output)
+    initrd_path = os.path.relpath(initrd, output)
+    config_path = ipxe_config_filename(output, iscsi_target_name)
+    with open(config_path, 'w') as config_output:
+        config_output.write(f'''#!ipxe
+set iti {socket.getfqdn()}
+set itn {iscsi_target_name}
+set iscsi_params iscsi_target_ip=${{iti}} iscsi_target_name=${{itn}}
+set cow_params cowsrc=network cowtype=${{cowtype}} root=/dev/mapper/root
+set params ${{iscsi_params}} ${{cow_params}}
+
+kernel {kernel_path} BOOTIF=01-${{netX/mac}} ${{params}} quiet
+initrd {initrd_path}
+boot
+''')
+    try:
+        yield config_path
+    except Exception:
+        os.unlink(config_path)
+        raise
+
+
+@contextlib.contextmanager
+def saved_config(path):
+    old_path = f'{path}.old'
+    if os.path.exists(old_path):
+        logging.warning('Old config %s exists, removing', old_path)
+        os.unlink(old_path)
+
+    if not os.path.exists(path):
+        logging.warning('%s does not exist', path)
+    else:
+        os.rename(path, old_path)
+
+    try:
+        yield old_path
+    except Exception:
+        logging.warning('Restoring config %s from %s', path, old_path)
+        if os.path.exists(old_path):
+            os.rename(old_path, path)
+        raise
+    else:
+        os.unlink(old_path)
+
+
+@contextlib.contextmanager
+def published_ipxe_config(output, config, testing=False):
+    path = os.path.join(output, 'boot-test.ipxe' if testing else 'boot.ipxe')
+    logging.info(f'Publishing{" testing" if testing else ""} iPXE config '
+                 'to %s', path)
+    with saved_config(path):
+        os.symlink(config, path)
+        try:
+            yield path
+        except Exception:
+            os.unlink(path)
+            raise
+
+
+def reboot_and_check_test_vm(vmm, vm, host, timestamp):
+    def booted_properly(host):
+        if not is_accessible(host):
+            return False
+        cmdline = ['ssh', host, 'cat', '/etc/timestamp']
+        logging.debug('Running %s', cmdline)
+        try:
+            output = subprocess.check_output(cmdline, text=True).strip()
+            if output != timestamp:
+                logging.warning('Actual timestamp %s is not expected %s',
+                                output, timestamp)
+            return True
+        except Exception:
+            logging.exception('Failed to get timestamp from %s', host)
+
+    if is_accessible(host):
+        reboot(host)
+    else:
+        logging.warning('%s is not accessble', host)
+        vmm.reset(vm)
+
+    wait_for(lambda: booted_properly(host), timeout=900, step=10)
+
+
+def parse_partitions_config(value):
+    with open(value) as config_input:
+        return PartitionsConfig(**json.load(config_input))
+
+
+def parse_args(raw_args):
+    parser = argparse.ArgumentParser(raw_args[0])
+    parser.add_argument('-v', '--verbose', action='count', default=0)
+    subparsers = parser.add_subparsers(help='subcommand to execute')
+
+    add_parser = subparsers.add_parser('add', help='Add new snapshot')
+    add_parser.add_argument('-s', '--snapshot-size', default='5G')
+    add_parser.add_argument('--to-copy', action='append')
+    add_parser.add_argument('--chroot-script')
+    add_parser.add_argument('ref_vm')
+    add_parser.add_argument('ref_host')
+    add_parser.add_argument('partitions_config', type=parse_partitions_config)
+    add_parser.add_argument('output')
+    add_parser.add_argument('test_vm')
+    add_parser.add_argument('test_host')
+    add_parser.set_defaults(func=add_snapshot)
+
+    clean_parser = subparsers.add_parser('clean', help='Cleanup old snapshots')
+    clean_parser.add_argument('--force-old', action='store_true')
+    clean_parser.add_argument('--force-latest', action='store_true')
+    clean_parser.add_argument('ref_vm')
+    clean_parser.add_argument('output')
+    clean_parser.set_defaults(func=clean_snapshots)
+
+    return parser.parse_args(raw_args[1:])
+
+
+def configure_logging(args):
+    levels = {
+        0: logging.WARN,
+        1: logging.INFO,
+    }
+    logging.basicConfig(
+        level=levels.get(args.verbose, logging.DEBUG),
+        format='%(asctime)s: %(levelname)-8s ' '%(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+
+def add_snapshot(args):
     vmm = Virsh()
     check_preconditions(vmm, args.ref_vm, args.ref_host)
 
     timestamp = generate_timestamp()
-    with contextlib.ExitStack() as stack:
-        snapshot_disk = stack.enter_context(vm_disk_snapshot(
+    with contextlib.ExitStack() as snapshot_stack:
+        snapshot_disk = snapshot_stack.enter_context(vm_disk_snapshot(
             vmm, args.ref_vm, args.ref_host, timestamp, args.snapshot_size
         ))
+        artifacts = snapshot_stack.enter_context(
+            snapshot_artifacts(args.output, snapshot_disk)
+        )
         logging.info('Snapshot disk is %s', snapshot_disk)
         disk_info = get_disk_information(snapshot_disk)
         assert disk_info.configuration.partition_table_type == 'gpt', (
@@ -509,14 +748,109 @@ def main(raw_args):
         disk_info = get_disk_information(snapshot_disk)
         net_partition = get_partition(snapshot_disk, disk_info,
                                       args.partitions_config.network)
-        stack.enter_context(partitions_exposed(snapshot_disk))
+        with contextlib.ExitStack() as fs_stack:
+            fs_stack.enter_context(partitions_exposed(snapshot_disk))
+            root = fs_stack.enter_context(chroot(net_partition.kpartx_name))
+            copy_files(root, args.to_copy)
+            write_timestamp(root, timestamp)
+            write_cow_config(args, root)
+            run_chroot_script(root, args.chroot_script)
+            kernel, initrd = publish_kernel_images(root, artifacts)
 
-        root = stack.enter_context(chroot(net_partition.kpartx_name))
-        copy_files(root, args.to_copy)
-        write_timestamp(root, timestamp)
-        write_cow_config(args, root)
-        run_chroot_script(root, args.chroot_script)
-        publish_kernel_images(root, args.output)
+        iscsi_target_name = snapshot_stack.enter_context(
+            publish_to_iscsi(snapshot_disk)
+        )
+        ipxe_config = snapshot_stack.enter_context(generate_ipxe_config(
+            args.output, iscsi_target_name, kernel, initrd
+        ))
+        snapshot_stack.enter_context(published_ipxe_config(
+            args.output, ipxe_config, testing=True
+        ))
+        reboot_and_check_test_vm(vmm, args.test_vm, args.test_host, timestamp)
+        with published_ipxe_config(args.output, ipxe_config):
+            logging.info('Finished')
+
+
+def get_snapshots(vmm, vm):
+    pattern = snapshot_glob(get_disk(vmm, vm))
+    return sorted(glob.glob(pattern))
+
+
+def get_dynamic_iscsi_sessions(target_name):
+    dynamic_sessions_file = os.path.join(
+        '/sys/kernel/config/target/iscsi',
+        target_name, 'tpgt_1/dynamic_sessions'
+    )
+    if not os.path.exists(dynamic_sessions_file):
+        return []
+
+    with open(dynamic_sessions_file) as sessions_input:
+        return list(map(str.strip, sessions_input.read().splitlines()))
+
+
+def clean_snapshot(output, name, force=False):
+    backstore_name = get_iscsi_backstore_name(name)
+    target_name = get_iscsi_target_name(backstore_name)
+    sessions = get_dynamic_iscsi_sessions(target_name)
+    if sessions:
+        logging.warning('Snapshot %s has the following dynamic sessions:',
+                        name)
+        for session in sessions:
+            logging.warning('  %s', session)
+        if not force:
+            logging.warning('Skipping cleanup')
+            return
+        else:
+            logging.warning('Continuing as requested')
+
+    ipxe_config = ipxe_config_filename(output, target_name)
+    if os.path.exists(ipxe_config):
+        logging.info('Cleaning iPXE config at %s', ipxe_config)
+        os.unlink(ipxe_config)
+
+    artifacts = snapshot_artifacts_path(output, name)
+    if os.path.exists(artifacts):
+        logging.info('Cleaning snapshot artifacts at %s', artifacts)
+        shutil.rmtree(artifacts)
+
+    try:
+        remove_iscsi_target(target_name)
+    except Exception:
+        logging.warning(f'Failed to remove iSCSI target {target_name}')
+
+    try:
+        remove_iscsi_backstore(backstore_name)
+    except Exception:
+        logging.warning(f'Failed to remove iSCSI backstore {backstore_name}')
+
+    cleanup_kpartx(name)
+    if is_lv_open(name):
+        raise RuntimeError(f'LV {name} is still open')
+
+    logging.info('LV %s is not open, proceeding with remove', name)
+    remove_lv(name)
+
+
+def clean_snapshots(args):
+    vmm = Virsh()
+    snapshots = get_snapshots(vmm, args.ref_vm)
+    if not snapshots:
+        return
+
+    old, latest = snapshots[:-1], snapshots[-1]
+
+    for snapshot in old:
+        clean_snapshot(args.output, snapshot, force=args.force_old)
+
+    if args.force_latest:
+        logging.warning('Removing latest snapshot %s', latest)
+        clean_snapshot(args.output, latest, force=True)
+
+
+def main(raw_args):
+    args = parse_args(raw_args)
+    configure_logging(args)
+    return args.func(args)
 
 
 if __name__ == '__main__':
