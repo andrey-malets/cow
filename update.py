@@ -338,12 +338,13 @@ def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size):
         assert os.path.exists(device)
         yield device
     except Exception:
-        logging.exception(f'Exception while using disk snapshot {name}, '
-                          'removing snapshot')
+        logging.error(f'Exception while using disk snapshot {name}, '
+                      'removing snapshot')
         try:
             remove_lv(device)
         except Exception:
             logging.exception('Exception while removing LV %s', device)
+        raise
 
 
 class VirtualMachineManager(abc.ABC):
@@ -483,6 +484,8 @@ def snapshot_artifacts(output, snapshot_disk):
     try:
         yield path
     except Exception:
+        logging.error('Exception while using artifacts directory %s, '
+                      'clening up', path)
         shutil.rmtree(path)
         raise
 
@@ -602,6 +605,7 @@ def generate_ipxe_config(output, iscsi_target_name, kernel, initrd):
     config_path = ipxe_config_filename(output, iscsi_target_name)
     with open(config_path, 'w') as config_output:
         config_output.write(f'''#!ipxe
+
 set iti {socket.getfqdn()}
 set itn {iscsi_target_name}
 set iscsi_params iscsi_target_ip=${{iti}} iscsi_target_name=${{itn}}
@@ -656,6 +660,18 @@ def published_ipxe_config(output, config, testing=False):
             raise
 
 
+@contextlib.contextmanager
+def reset_back_on_failure(vmm, vm):
+    try:
+        yield
+    except Exception:
+        try:
+            vmm.reset(vm)
+        except Exception:
+            logging.exception('Failed to reset VM %s', vm)
+        raise
+
+
 def reboot_and_check_test_vm(vmm, vm, host, timestamp):
     def booted_properly(host):
         if not is_accessible(host):
@@ -677,7 +693,7 @@ def reboot_and_check_test_vm(vmm, vm, host, timestamp):
         logging.warning('%s is not accessble', host)
         vmm.reset(vm)
 
-    wait_for(lambda: booted_properly(host), timeout=900, step=10)
+    wait_for(lambda: booted_properly(host), timeout=180, step=10)
 
 
 def parse_partitions_config(value):
@@ -763,6 +779,8 @@ def add_snapshot(args):
         ipxe_config = snapshot_stack.enter_context(generate_ipxe_config(
             args.output, iscsi_target_name, kernel, initrd
         ))
+
+        snapshot_stack.enter_context(reset_back_on_failure(vmm, args.test_vm))
         snapshot_stack.enter_context(published_ipxe_config(
             args.output, ipxe_config, testing=True
         ))
