@@ -41,6 +41,39 @@ def wait_for(condition, timeout, step):
     raise Timeout(f'Failed to wait {timeout} seconds for f{condition}')
 
 
+@contextlib.contextmanager
+def transact(prepare=None, final=None, commit=None, rollback=None):
+    assert final is None or (commit is None and rollback is None), (
+        'final action must only be present with no commit and rollback'
+    )
+    rv = None
+    if prepare is not None:
+        prepare_msg, prepare_fn = prepare
+        logging.info(prepare_msg)
+        rv = prepare_fn()
+    try:
+        yield rv
+    except Exception as e:
+        if any((final, rollback)):
+            rollback_msg, rollback_fn = next(filter(None, (final, rollback)))
+            if rollback_msg:
+                logging.warning(rollback_msg)
+            try:
+                rollback_fn((rv, e))
+            except Exception:
+                logging.exception('Exception while %s', rollback_msg)
+        raise
+    else:
+        if any((final, commit)):
+            commit_msg, commit_fn = next(filter(None, (final, commit)))
+            if commit_msg:
+                logging.info(commit_msg)
+            try:
+                commit_fn((rv, None))
+            except Exception:
+                logging.exception('Exception while %s', commit_msg)
+
+
 def no_dpkg_locks(host):
     return ssh(host, '! fuser /var/lib/dpkg/lock') == 0
 
@@ -142,19 +175,25 @@ def get_kpartx_names(device):
                               'for device %s', device)
 
 
-@contextlib.contextmanager
-def partitions_exposed(device):
+def expose_kpartx_partitions(device):
     cmdline = ['kpartx', '-a', '-s', device]
     logging.debug('Running %s', cmdline)
     subprocess.check_call(cmdline)
-    try:
+
+
+@contextlib.contextmanager
+def partitions_exposed(device):
+    with transact(
+        prepare=(
+            f'Exposing kpartx partitions for {device}',
+            lambda: expose_kpartx_partitions(device)
+        ),
+        final=(
+            f'cleaning up partitions for device {device}',
+            lambda _: cleanup_kpartx(device)
+        )
+    ):
         yield
-    finally:
-        try:
-            cleanup_kpartx(device)
-        except Exception:
-            logging.exception('Exception while cleaning up partitions '
-                              'for device %s', device)
 
 
 def parse_partitions(device, lines):
@@ -271,6 +310,12 @@ def remove_lv(name):
     subprocess.check_call(cmdline)
 
 
+def umount(mountpoint):
+    umount_cmdline = ['umount', mountpoint]
+    logging.debug('Running %s', umount_cmdline)
+    subprocess.check_call(umount_cmdline)
+
+
 @contextlib.contextmanager
 def mounted(device, mountpoint, type_=None, options=None):
     assert os.path.exists(mountpoint), f'{mountpoint} does not exist'
@@ -283,17 +328,14 @@ def mounted(device, mountpoint, type_=None, options=None):
     mount_cmdline.append('none' if device is None else device)
     mount_cmdline.append(mountpoint)
 
+    logging.info('Mounting %s to %s', device, mountpoint)
     logging.debug('Running %s', mount_cmdline)
     subprocess.check_call(mount_cmdline)
-    try:
+
+    with transact(
+        final=(f'unmouning {mountpoint}', lambda _: umount(mountpoint))
+    ):
         yield
-    finally:
-        try:
-            umount_cmdline = ['umount', mountpoint]
-            logging.debug('Running %s', umount_cmdline)
-            subprocess.check_call(umount_cmdline)
-        except Exception:
-            logging.exception('Failed to unmount %s', mountpoint)
 
 
 @contextlib.contextmanager
@@ -322,29 +364,34 @@ def get_disk(vmm, vm):
     return disks[0]
 
 
-@contextlib.contextmanager
-def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size):
+def create_vm_disk_snapshot(vmm, vm, host, timestamp, size):
     origin = None
     name = None
-    with vm_shut_down(vmm, ref_vm, ref_host):
-        ref_lv = get_disk(vmm, ref_vm)
-        wait_for(lambda: not is_lv_open(ref_lv), timeout=30, step=1)
-        origin = ref_lv
+    with vm_shut_down(vmm, vm, host):
+        lv = get_disk(vmm, vm)
+        wait_for(lambda: not is_lv_open(lv), timeout=30, step=1)
+        origin = lv
         name = snapshot_name(origin, timestamp)
         create_lvm_snapshot(origin, name, size)
 
-    device = os.path.join(os.path.dirname(origin), name)
-    try:
+    return os.path.join(os.path.dirname(origin), name)
+
+
+@contextlib.contextmanager
+def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size):
+    with transact(
+        prepare=(
+            f'Creating disk snapshot of {ref_vm}',
+            lambda: create_vm_disk_snapshot(vmm, ref_vm, ref_host,
+                                            timestamp, size)
+        ),
+        rollback=(
+            'cleaning up disk snapshot',
+            lambda result: remove_lv(result[0])
+        )
+    ) as device:
         assert os.path.exists(device)
         yield device
-    except Exception:
-        logging.error(f'Exception while using disk snapshot {name}, '
-                      'removing snapshot')
-        try:
-            remove_lv(device)
-        except Exception:
-            logging.exception('Exception while removing LV %s', device)
-        raise
 
 
 class VirtualMachineManager(abc.ABC):
@@ -404,6 +451,7 @@ def vm_shut_down(vmm, name, host):
         except Timeout:
             logging.exception('Timed out waiting for %s to become accessbile '
                               'with ssh', host)
+            raise
 
 
 @dataclass(frozen=True)
@@ -515,14 +563,13 @@ def create_iscsi_backstore(device):
                f'dev={device}', f'name={name}', 'readonly=True']
     logging.info('Adding iSCSI backstore: %s', cmdline)
     subprocess.check_call(cmdline)
-    try:
+    with transact(
+        rollback=(
+            f'cleaning up iSCSI backstore {name}',
+            lambda _: remove_iscsi_backstore(name)
+        )
+    ):
         yield name
-    except Exception:
-        try:
-            remove_iscsi_backstore(name)
-        except Exception:
-            logging.exception(f'Failed to remove iSCSI backstore {name}')
-        raise
 
 
 def remove_iscsi_target(name):
@@ -549,15 +596,14 @@ def create_iscsi_target(backstore_name):
     logging.info('Adding iSCSI target: %s', cmdline)
     subprocess.check_call(cmdline)
 
-    try:
+    with transact(
+        rollback=(
+            f'cleaning up iSCSI target {target_name}',
+            lambda _: remove_iscsi_target(target_name)
+        )
+    ):
         attach_backstore_to_iscsi_target(target_name, backstore_name)
         yield target_name
-    except Exception:
-        try:
-            remove_iscsi_target(target_name)
-        except Exception:
-            logging.exception(f'Failed to remove iSCSI target {target_name}')
-        raise
 
 
 def configure_authentication(target_name):
@@ -575,23 +621,18 @@ def save_iscsi_config():
 
 @contextlib.contextmanager
 def publish_to_iscsi(device):
-    try:
-        with contextlib.ExitStack() as stack:
-            backstore_name = stack.enter_context(
-                create_iscsi_backstore(device)
-            )
-            target_name = stack.enter_context(
-                create_iscsi_target(backstore_name)
-            )
-            configure_authentication(target_name)
-            save_iscsi_config()
-            yield target_name
-    except Exception:
-        try:
-            save_iscsi_config()
-        except Exception:
-            logging.exception('Failed to save iSCSI config')
-        raise
+    with transact(
+        rollback=('saving iSCSI config', lambda _: save_iscsi_config())
+    ), contextlib.ExitStack() as stack:
+        backstore_name = stack.enter_context(
+            create_iscsi_backstore(device)
+        )
+        target_name = stack.enter_context(
+            create_iscsi_target(backstore_name)
+        )
+        configure_authentication(target_name)
+        save_iscsi_config()
+        yield target_name
 
 
 def ipxe_config_filename(output, iscsi_target_name):
@@ -616,11 +657,13 @@ kernel {kernel_path} BOOTIF=01-${{netX/mac}} ${{params}} quiet
 initrd {initrd_path}
 boot
 ''')
-    try:
+    with transact(
+        rollback=(
+            f'cleaning up iSCSI config {config_path}',
+            lambda _: os.unlink(config_path)
+        )
+    ):
         yield config_path
-    except Exception:
-        os.unlink(config_path)
-        raise
 
 
 @contextlib.contextmanager
@@ -651,25 +694,19 @@ def published_ipxe_config(output, config, testing=False):
     path = os.path.join(output, 'boot-test.ipxe' if testing else 'boot.ipxe')
     logging.info(f'Publishing{" testing" if testing else ""} iPXE config '
                  'to %s', path)
-    with saved_config(path):
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(saved_config(path))
+        stack.enter_context(transact(
+            rollback=(f'removing {path}', lambda _: os.unlink(path))
+        ))
         os.symlink(config, path)
-        try:
-            yield path
-        except Exception:
-            os.unlink(path)
-            raise
+        yield path
 
 
 @contextlib.contextmanager
 def reset_back_on_failure(vmm, vm):
-    try:
+    with transact(rollback=(None, lambda _: vmm.reset(vm))):
         yield
-    except Exception:
-        try:
-            vmm.reset(vm)
-        except Exception:
-            logging.exception('Failed to reset VM %s', vm)
-        raise
 
 
 def reboot_and_check_test_vm(vmm, vm, host, timestamp):
@@ -704,7 +741,9 @@ def parse_partitions_config(value):
 def parse_args(raw_args):
     parser = argparse.ArgumentParser(raw_args[0])
     parser.add_argument('-v', '--verbose', action='count', default=0)
-    subparsers = parser.add_subparsers(help='subcommand to execute')
+    subparsers = parser.add_subparsers(
+        metavar='subcommand', help='subcommand to execute', required=True
+    )
 
     add_parser = subparsers.add_parser('add', help='Add new snapshot')
     add_parser.add_argument('-s', '--snapshot-size', default='5G')
@@ -785,8 +824,10 @@ def add_snapshot(args):
             args.output, ipxe_config, testing=True
         ))
         reboot_and_check_test_vm(vmm, args.test_vm, args.test_host, timestamp)
-        with published_ipxe_config(args.output, ipxe_config):
-            logging.info('Finished')
+        ipxe_config = snapshot_stack.enter_context(
+            published_ipxe_config(args.output, ipxe_config)
+        )
+        logging.info('Published iPXE config to %s', ipxe_config)
 
 
 def get_snapshots(vmm, vm):
