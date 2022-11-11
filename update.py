@@ -276,12 +276,19 @@ def generate_timestamp():
     return datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
 
 
-def snapshot_name(origin, timestamp):
+LVM_SNAPSHOT_SUFFIX = '-snapshot'
+
+
+def lvm_snapshot_name(origin, timestamp):
     return f'{os.path.basename(origin)}-at-{timestamp}'
 
 
+def vm_snapshot_name(lvm_snapshot_name):
+    return f'{lvm_snapshot_name}-snapshot'
+
+
 def snapshot_glob(origin):
-    return f'{origin}-at-*'
+    return f'{origin}-at-*-snapshot'
 
 
 def is_lv_open(name):
@@ -371,27 +378,69 @@ def create_vm_disk_snapshot(vmm, vm, host, timestamp, size):
         lv = get_disk(vmm, vm)
         wait_for(lambda: not is_lv_open(lv), timeout=30, step=1)
         origin = lv
-        name = snapshot_name(origin, timestamp)
+        name = lvm_snapshot_name(origin, timestamp)
         create_lvm_snapshot(origin, name, size)
 
     return os.path.join(os.path.dirname(origin), name)
 
 
+def create_volume_copy(src, dst):
+    size_cmdline = ['blockdev', '--getsize64', src]
+    logging.debug('Running %s', size_cmdline)
+    size = subprocess.check_output(size_cmdline, text=True).strip()
+
+    vg = os.path.basename(os.path.dirname(src))
+
+    create_cmdline = ['lvcreate', '-L', f'{size}b', '-n', dst, vg]
+    logging.debug('Running %s', create_cmdline)
+    subprocess.check_call(create_cmdline)
+
+    return os.path.join(os.path.dirname(src), dst)
+
+
 @contextlib.contextmanager
-def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size):
+def volume_copy(src, dst):
     with transact(
         prepare=(
-            f'Creating disk snapshot of {ref_vm}',
-            lambda: create_vm_disk_snapshot(vmm, ref_vm, ref_host,
-                                            timestamp, size)
+            f'copying LVM {src} to {dst}',
+            lambda: create_volume_copy(src, dst)
         ),
         rollback=(
-            'cleaning up disk snapshot',
+            'cleaning up LVM copy',
             lambda result: remove_lv(result[0])
         )
-    ) as device:
-        assert os.path.exists(device)
-        yield device
+    ) as copy_name:
+        yield copy_name
+
+
+def copy_data(src, dst, block_size='128M'):
+    cmdline = ['dd', f'if={src}', f'of={dst}', f'bs={block_size}']
+    logging.info('Copying data from %s to %s', src, dst)
+    logging.debug('Running %s', cmdline)
+    subprocess.check_call(cmdline)
+
+
+@contextlib.contextmanager
+def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size):
+    with contextlib.ExitStack() as stack:
+        with transact(
+            prepare=(
+                f'Creating disk snapshot of {ref_vm}',
+                lambda: create_vm_disk_snapshot(vmm, ref_vm, ref_host,
+                                                timestamp, size)
+            ),
+            final=(
+                'cleaning up disk snapshot',
+                lambda result: remove_lv(result[0])
+            )
+        ) as lvm_snapshot:
+            assert os.path.exists(lvm_snapshot)
+            vm_snapshot = stack.enter_context(volume_copy(
+                lvm_snapshot, vm_snapshot_name(os.path.basename(lvm_snapshot))
+            ))
+        assert os.path.exists(vm_snapshot)
+        copy_data(lvm_snapshot, vm_snapshot)
+        yield vm_snapshot
 
 
 class VirtualMachineManager(abc.ABC):
@@ -624,12 +673,8 @@ def publish_to_iscsi(device):
     with transact(
         rollback=('saving iSCSI config', lambda _: save_iscsi_config())
     ), contextlib.ExitStack() as stack:
-        backstore_name = stack.enter_context(
-            create_iscsi_backstore(device)
-        )
-        target_name = stack.enter_context(
-            create_iscsi_target(backstore_name)
-        )
+        backstore_name = stack.enter_context(create_iscsi_backstore(device))
+        target_name = stack.enter_context(create_iscsi_target(backstore_name))
         configure_authentication(target_name)
         save_iscsi_config()
         yield target_name
