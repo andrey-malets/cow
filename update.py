@@ -489,13 +489,12 @@ def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size, cache_config):
             )
         ) as lvm_snapshot:
             assert os.path.exists(lvm_snapshot)
-            non_cached_snapshot = stack.enter_context(volume_copy(
+            vm_snapshot = stack.enter_context(volume_copy(
                 lvm_snapshot, vm_snapshot_name(os.path.basename(lvm_snapshot)),
                 non_volatile_pv
             ))
-            assert os.path.exists(non_cached_snapshot)
-            copy_data(lvm_snapshot, non_cached_snapshot)
-            vm_snapshot = configure_caching(non_cached_snapshot, cache_config)
+            assert os.path.exists(vm_snapshot)
+            copy_data(lvm_snapshot, vm_snapshot)
         yield vm_snapshot
 
 
@@ -925,6 +924,8 @@ def add_snapshot(args):
             write_cow_config(args, root)
             run_chroot_script(root, args.chroot_script)
             kernel, initrd = publish_kernel_images(root, artifacts)
+
+        configure_caching(snapshot_disk, args.cache_config)
 
         iscsi_target_name = snapshot_stack.enter_context(
             publish_to_iscsi(snapshot_disk)
