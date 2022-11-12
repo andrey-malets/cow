@@ -54,7 +54,7 @@ def transact(prepare=None, final=None, commit=None, rollback=None):
         rv = prepare_fn()
     try:
         yield rv
-    except Exception as e:
+    except BaseException as e:
         if any((final, rollback)):
             rollback_msg, rollback_fn = next(filter(None, (final, rollback)))
             if rollback_msg:
