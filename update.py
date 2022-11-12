@@ -49,7 +49,8 @@ def transact(prepare=None, final=None, commit=None, rollback=None):
     rv = None
     if prepare is not None:
         prepare_msg, prepare_fn = prepare
-        logging.info(prepare_msg)
+        if prepare_msg is not None:
+            logging.info(prepare_msg)
         rv = prepare_fn()
     try:
         yield rv
@@ -287,6 +288,10 @@ def vm_snapshot_name(lvm_snapshot_name):
     return f'{lvm_snapshot_name}-snapshot'
 
 
+def cache_lv_name(vm_snapshot_name):
+    return f'{vm_snapshot_name}-cache'
+
+
 def snapshot_glob(origin):
     return f'{origin}-at-*-snapshot'
 
@@ -305,8 +310,10 @@ def is_lv_open(name):
         raise RuntimeError(f'Cannot parse LV attributes "{output}"')
 
 
-def create_lvm_snapshot(origin, name, size):
+def create_lvm_snapshot(origin, name, size, non_volatile_pv):
     cmdline = ['lvcreate', '-s', '-L', size, '-n', name, origin]
+    if non_volatile_pv is not None:
+        cmdline.append(non_volatile_pv)
     logging.debug('Running %s', cmdline)
     subprocess.check_call(cmdline)
 
@@ -371,7 +378,7 @@ def get_disk(vmm, vm):
     return disks[0]
 
 
-def create_vm_disk_snapshot(vmm, vm, host, timestamp, size):
+def create_vm_disk_snapshot(vmm, vm, host, timestamp, size, non_volatile_pv):
     origin = None
     name = None
     with vm_shut_down(vmm, vm, host):
@@ -379,19 +386,21 @@ def create_vm_disk_snapshot(vmm, vm, host, timestamp, size):
         wait_for(lambda: not is_lv_open(lv), timeout=30, step=1)
         origin = lv
         name = lvm_snapshot_name(origin, timestamp)
-        create_lvm_snapshot(origin, name, size)
+        create_lvm_snapshot(origin, name, size, non_volatile_pv)
 
     return os.path.join(os.path.dirname(origin), name)
 
 
-def create_volume_copy(src, dst):
+def create_volume_copy(src, dst, non_volatile_pv):
     size_cmdline = ['blockdev', '--getsize64', src]
     logging.debug('Running %s', size_cmdline)
     size = subprocess.check_output(size_cmdline, text=True).strip()
 
     vg = os.path.basename(os.path.dirname(src))
 
-    create_cmdline = ['lvcreate', '-L', f'{size}b', '-n', dst, vg]
+    create_cmdline = ['lvcreate', '-L', f'{size}B', '-n', dst, vg]
+    if non_volatile_pv is not None:
+        create_cmdline.append(non_volatile_pv)
     logging.debug('Running %s', create_cmdline)
     subprocess.check_call(create_cmdline)
 
@@ -399,11 +408,11 @@ def create_volume_copy(src, dst):
 
 
 @contextlib.contextmanager
-def volume_copy(src, dst):
+def volume_copy(src, dst, non_volatile_pv):
     with transact(
         prepare=(
             f'copying LVM {src} to {dst}',
-            lambda: create_volume_copy(src, dst)
+            lambda: create_volume_copy(src, dst, non_volatile_pv)
         ),
         rollback=(
             'cleaning up LVM copy',
@@ -420,14 +429,57 @@ def copy_data(src, dst, block_size='128M'):
     subprocess.check_call(cmdline)
 
 
+def create_cache_volume(non_cached_name, config):
+    name = cache_lv_name(non_cached_name)
+    cmdline = ['lvcreate', '-L', config.cache_volume_size,
+               '-n', name, config.volume_group, config.cache_pv]
+    logging.info('Adding cache volume %s for %s', non_cached_name, name)
+    logging.debug('Running %s', cmdline)
+    subprocess.check_call(cmdline)
+    return name
+
+
 @contextlib.contextmanager
-def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size):
+def cache_volume(non_cached_name, config):
+    with transact(
+        prepare=(None, lambda: create_cache_volume(non_cached_name, config)),
+        rollback=lambda result: remove_lv(result[0]),
+    ) as cached_name:
+        yield cached_name
+
+
+def configure_caching(non_cached_volume, config):
+    if config is None:
+        logging.info('Caching is not configured, skipping cache for %s',
+                     non_cached_volume)
+        return non_cached_volume
+    try:
+        with cache_volume(non_cached_volume, config) as cache_volume_name:
+            enable_cmdline = ['lvconvert', '--type', 'cache',
+                              '--cachevol', cache_volume_name,
+                              '--cachemode', 'writethrough', non_cached_volume,
+                              '-y']
+            logging.info('Enabling cache for %s on %s', non_cached_volume,
+                         cache_volume_name)
+            logging.debug('Running %s', enable_cmdline)
+            subprocess.check_call(enable_cmdline)
+            cached_volume = non_cached_volume
+            return cached_volume
+    except Exception:
+        logging.exception('Failed to enable caching for %s', non_cached_volume)
+        return non_cached_volume
+
+
+@contextlib.contextmanager
+def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size, cache_config):
+    non_volatile_pv = (cache_config.non_volatile_pv if cache_config else None)
     with contextlib.ExitStack() as stack:
         with transact(
             prepare=(
                 f'Creating disk snapshot of {ref_vm}',
                 lambda: create_vm_disk_snapshot(vmm, ref_vm, ref_host,
-                                                timestamp, size)
+                                                timestamp, size,
+                                                non_volatile_pv)
             ),
             final=(
                 'cleaning up disk snapshot',
@@ -435,11 +487,13 @@ def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size):
             )
         ) as lvm_snapshot:
             assert os.path.exists(lvm_snapshot)
-            vm_snapshot = stack.enter_context(volume_copy(
-                lvm_snapshot, vm_snapshot_name(os.path.basename(lvm_snapshot))
+            non_cached_snapshot = stack.enter_context(volume_copy(
+                lvm_snapshot, vm_snapshot_name(os.path.basename(lvm_snapshot)),
+                non_volatile_pv
             ))
-        assert os.path.exists(vm_snapshot)
-        copy_data(lvm_snapshot, vm_snapshot)
+            assert os.path.exists(non_cached_snapshot)
+            copy_data(lvm_snapshot, non_cached_snapshot)
+            vm_snapshot = configure_caching(non_cached_snapshot, cache_config)
         yield vm_snapshot
 
 
@@ -504,7 +558,7 @@ def vm_shut_down(vmm, name, host):
 
 
 @dataclass(frozen=True)
-class PartitionsConfig:
+class CowPartitionsConfig:
     base: str
     network: str
     local: str
@@ -513,6 +567,14 @@ class PartitionsConfig:
     sign: str
     keyimage: str
     place: str
+
+
+@dataclass(frozen=True)
+class CacheConfig:
+    volume_group: str
+    non_volatile_pv: str
+    cache_pv: str
+    cache_volume_size: str
 
 
 def check_preconditions(vmm, ref_vm, ref_host):
@@ -778,9 +840,11 @@ def reboot_and_check_test_vm(vmm, vm, host, timestamp):
     wait_for(lambda: booted_properly(host), timeout=180, step=10)
 
 
-def parse_partitions_config(value):
-    with open(value) as config_input:
-        return PartitionsConfig(**json.load(config_input))
+def parse_config(type_):
+    def parser(value):
+        with open(value) as config_input:
+            return type_(**json.load(config_input))
+    return parser
 
 
 def parse_args(raw_args):
@@ -792,11 +856,13 @@ def parse_args(raw_args):
 
     add_parser = subparsers.add_parser('add', help='Add new snapshot')
     add_parser.add_argument('-s', '--snapshot-size', default='5G')
+    add_parser.add_argument('--cache-config', type=parse_config(CacheConfig))
     add_parser.add_argument('--to-copy', action='append')
     add_parser.add_argument('--chroot-script')
     add_parser.add_argument('ref_vm')
     add_parser.add_argument('ref_host')
-    add_parser.add_argument('partitions_config', type=parse_partitions_config)
+    add_parser.add_argument('partitions_config',
+                            type=parse_config(CowPartitionsConfig))
     add_parser.add_argument('output')
     add_parser.add_argument('test_vm')
     add_parser.add_argument('test_host')
@@ -831,7 +897,8 @@ def add_snapshot(args):
     timestamp = generate_timestamp()
     with contextlib.ExitStack() as snapshot_stack:
         snapshot_disk = snapshot_stack.enter_context(vm_disk_snapshot(
-            vmm, args.ref_vm, args.ref_host, timestamp, args.snapshot_size
+            vmm, args.ref_vm, args.ref_host, timestamp, args.snapshot_size,
+            args.cache_config
         ))
         artifacts = snapshot_stack.enter_context(
             snapshot_artifacts(args.output, snapshot_disk)
@@ -928,11 +995,17 @@ def clean_snapshot(output, name, force=False):
         logging.warning(f'Failed to remove iSCSI backstore {backstore_name}')
 
     cleanup_kpartx(name)
+
     if is_lv_open(name):
         raise RuntimeError(f'LV {name} is still open')
 
     logging.info('LV %s is not open, proceeding with remove', name)
     remove_lv(name)
+
+    cache_volume = cache_lv_name(name)
+    if os.path.exists(cache_volume):
+        logging.warning('Cache volume %s still exists, removing', cache_volume)
+        remove_lv(cache_volume)
 
 
 def clean_snapshots(args):
