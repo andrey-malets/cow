@@ -456,10 +456,11 @@ def configure_caching(non_cached_volume, config):
         return non_cached_volume
     try:
         with cache_volume(non_cached_volume, config) as cache_volume_name:
-            enable_cmdline = ['lvconvert', '--type', 'cache',
-                              '--cachevol', cache_volume_name,
-                              '--cachemode', 'writethrough', non_cached_volume,
-                              '-y']
+            enable_cmdline = [
+                'lvconvert', '-y', '--type', 'cache',
+                '--cachevol', cache_volume_name,
+                '--cachemode', 'writethrough', non_cached_volume
+            ]
             logging.info('Enabling cache for %s on %s', non_cached_volume,
                          cache_volume_name)
             logging.debug('Running %s', enable_cmdline)
