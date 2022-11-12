@@ -311,7 +311,7 @@ def is_lv_open(name):
 
 
 def create_lvm_snapshot(origin, name, size, non_volatile_pv):
-    cmdline = ['lvcreate', '-s', '-L', size, '-n', name, origin]
+    cmdline = ['lvcreate', '-y', '-s', '-L', size, '-n', name, origin]
     if non_volatile_pv is not None:
         cmdline.append(non_volatile_pv)
     logging.debug('Running %s', cmdline)
@@ -391,20 +391,24 @@ def create_vm_disk_snapshot(vmm, vm, host, timestamp, size, non_volatile_pv):
     return os.path.join(os.path.dirname(origin), name)
 
 
+def create_lvm_volume(name, size, vg, pv=None):
+    create_cmdline = ['lvcreate', '-y', '-L', f'{size}B', '-n', name, vg]
+    if pv is not None:
+        create_cmdline.append(pv)
+    logging.debug('Running %s', create_cmdline)
+    subprocess.check_call(create_cmdline)
+    return name
+
+
 def create_volume_copy(src, dst, non_volatile_pv):
     size_cmdline = ['blockdev', '--getsize64', src]
     logging.debug('Running %s', size_cmdline)
     size = subprocess.check_output(size_cmdline, text=True).strip()
-
     vg = os.path.basename(os.path.dirname(src))
-
-    create_cmdline = ['lvcreate', '-L', f'{size}B', '-n', dst, vg]
-    if non_volatile_pv is not None:
-        create_cmdline.append(non_volatile_pv)
-    logging.debug('Running %s', create_cmdline)
-    subprocess.check_call(create_cmdline)
-
-    return os.path.join(os.path.dirname(src), dst)
+    return os.path.join(
+        os.path.dirname(src),
+        create_lvm_volume(dst, size, vg, non_volatile_pv)
+    )
 
 
 @contextlib.contextmanager
@@ -431,12 +435,9 @@ def copy_data(src, dst, block_size='128M'):
 
 def create_cache_volume(non_cached_name, config):
     name = cache_lv_name(non_cached_name)
-    cmdline = ['lvcreate', '-L', config.cache_volume_size,
-               '-n', name, config.volume_group, config.cache_pv]
     logging.info('Adding cache volume %s for %s', non_cached_name, name)
-    logging.debug('Running %s', cmdline)
-    subprocess.check_call(cmdline)
-    return name
+    return create_lvm_volume(name, config.cache_volume_size,
+                             config.volume_group, config.cache_pv)
 
 
 @contextlib.contextmanager
