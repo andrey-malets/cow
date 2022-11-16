@@ -428,10 +428,50 @@ def create_cache_volume(non_cached_name, config):
 @contextlib.contextmanager
 def cache_volume(non_cached_name, config):
     with transact(
-        prepare=(None, lambda: create_cache_volume(non_cached_name, config)),
-        rollback=lambda result: remove_lv(result[0]),
+        prepare=(
+            None,
+            lambda: create_cache_volume(non_cached_name, config)
+        ),
+        rollback=(
+            f'removing cache volume for {non_cached_name}',
+            lambda result: remove_lv(result[0])
+        )
     ) as cached_name:
         yield cached_name
+
+
+def cache_record_file(config, volume):
+    return os.path.join(config.cached_volumes_path, os.path.basename(volume))
+
+
+def create_cache_record(config, volume):
+    record_file = cache_record_file(config, volume)
+    os.makedirs(os.path.dirname(record_file), exist_ok=True)
+    with open(record_file, 'w'):
+        pass
+
+
+def delete_cache_record(config, volume):
+    record_file = cache_record_file(config, volume)
+    try:
+        os.remove(record_file)
+    except FileNotFoundError:
+        logging.warning('Cache record file %s does not exist', record_file)
+
+
+@contextlib.contextmanager
+def cache_record(name, config):
+    with transact(
+        prepare=(
+            f'Adding cache record for {name}',
+            lambda: create_cache_record(config, name)
+        ),
+        rollback=(
+            f'Deleting cache record for {name}',
+            lambda _: delete_cache_record(config, name)
+        )
+    ):
+        yield
 
 
 def configure_caching(non_cached_volume, config):
@@ -440,7 +480,11 @@ def configure_caching(non_cached_volume, config):
                      non_cached_volume)
         return non_cached_volume
     try:
-        with cache_volume(non_cached_volume, config) as cache_volume_name:
+        with contextlib.ExitStack() as stack:
+            cache_volume_name = stack.enter_context(
+                cache_volume(non_cached_volume, config)
+            )
+            stack.enter_context(cache_record(non_cached_volume, config))
             enable_cmdline = [
                 'lvconvert', '-y', '--type', 'cache',
                 '--cachevol', cache_volume_name,
@@ -743,7 +787,7 @@ boot
     with transact(
         rollback=(
             f'cleaning up iSCSI config {config_path}',
-            lambda _: os.unlink(config_path)
+            lambda _: os.remove(config_path)
         )
     ):
         yield config_path
@@ -754,7 +798,7 @@ def saved_config(path):
     old_path = f'{path}.old'
     if os.path.exists(old_path):
         logging.warning('Old config %s exists, removing', old_path)
-        os.unlink(old_path)
+        os.remove(old_path)
 
     if not os.path.exists(path):
         logging.warning('%s does not exist', path)
@@ -769,7 +813,7 @@ def saved_config(path):
             os.rename(old_path, path)
         raise
     else:
-        os.unlink(old_path)
+        os.remove(old_path)
 
 
 @contextlib.contextmanager
@@ -780,7 +824,7 @@ def published_ipxe_config(output, config, testing=False):
     with contextlib.ExitStack() as stack:
         stack.enter_context(saved_config(path))
         stack.enter_context(transact(
-            rollback=(f'removing {path}', lambda _: os.unlink(path))
+            rollback=(f'removing {path}', lambda _: os.remove(path))
         ))
         os.symlink(config, path)
         yield path
@@ -887,7 +931,7 @@ def get_dynamic_iscsi_sessions(target_name):
         return list(filter(None, map(str.strip, lines)))
 
 
-def clean_snapshot(output, name, force=False):
+def clean_snapshot(output, cache_config, name, force=False):
     backstore_name = get_iscsi_backstore_name(name)
     target_name = get_iscsi_target_name(backstore_name)
     sessions = get_dynamic_iscsi_sessions(target_name)
@@ -905,7 +949,7 @@ def clean_snapshot(output, name, force=False):
     ipxe_config = ipxe_config_filename(output, target_name)
     if os.path.exists(ipxe_config):
         logging.info('Cleaning iPXE config at %s', ipxe_config)
-        os.unlink(ipxe_config)
+        os.remove(ipxe_config)
 
     artifacts = snapshot_artifacts_path(output, name)
     if os.path.exists(artifacts):
@@ -923,6 +967,9 @@ def clean_snapshot(output, name, force=False):
         logging.warning(f'Failed to remove iSCSI backstore {backstore_name}')
 
     cleanup_kpartx(name)
+
+    if cache_config:
+        delete_cache_record(cache_config, name)
 
     if is_lv_open(name):
         raise RuntimeError(f'LV {name} is still open')
@@ -945,11 +992,12 @@ def clean_snapshots(args):
     old, latest = snapshots[:-1], snapshots[-1]
 
     for snapshot in old:
-        clean_snapshot(args.output, snapshot, force=args.force_old)
+        clean_snapshot(args.output, args.cache_config, snapshot,
+                       force=args.force_old)
 
     if args.force_latest:
         logging.warning('Removing latest snapshot %s', latest)
-        clean_snapshot(args.output, latest, force=True)
+        clean_snapshot(args.output, args.cache_config, latest, force=True)
 
 
 def parse_config(type_):
