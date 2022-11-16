@@ -18,13 +18,22 @@ import time
 import xml.etree.ElementTree as ET
 
 
+def log_and_call(cmdline, method=subprocess.check_call, **kwargs):
+    logging.debug('Running %s', cmdline)
+    return method(cmdline, **kwargs)
+
+
+def log_and_output(cmdline, **kwargs):
+    return log_and_call(cmdline, method=subprocess.check_output, text=True,
+                        **kwargs)
+
+
 def ssh(host, command, options=None, **kwargs):
     cmdline = ['ssh']
     if options is not None:
         cmdline.extend(options)
     cmdline.extend([host, command])
-    logging.debug('Running %s', cmdline)
-    return subprocess.call(cmdline, **kwargs)
+    return log_and_call(cmdline, method=subprocess.call, **kwargs)
 
 
 class Timeout(Exception):
@@ -38,7 +47,7 @@ def wait_for(condition, timeout, step):
             return True
         time.sleep(step)
 
-    raise Timeout(f'Failed to wait {timeout} seconds for f{condition}')
+    raise Timeout(f'Failed to wait {timeout} seconds for {condition}')
 
 
 @contextlib.contextmanager
@@ -139,9 +148,8 @@ class DiskConfigError(Exception):
 def cleanup_kpartx(device):
     cmdline = ['kpartx', '-d', '-v', device]
     for delay in (0.1, 0.3, 0.5, 1, 2, 3, None):
-        logging.debug('Running %s', cmdline)
-        result = subprocess.run(cmdline, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
+        result = log_and_call(cmdline, method=subprocess.run, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if result.returncode == 0:
             return
         if 'is in use' in result.stdout:
@@ -162,7 +170,7 @@ def get_kpartx_names(device):
     cmdline = ['kpartx', '-l', '-s', device]
     logging.debug('Running %s', cmdline)
     try:
-        output = subprocess.check_output(cmdline, text=True)
+        output = log_and_output(cmdline)
         result = {}
         for index, line in enumerate(output.splitlines()):
             name = line.split(' ', 1)[0]
@@ -176,18 +184,12 @@ def get_kpartx_names(device):
                               'for device %s', device)
 
 
-def expose_kpartx_partitions(device):
-    cmdline = ['kpartx', '-a', '-s', device]
-    logging.debug('Running %s', cmdline)
-    subprocess.check_call(cmdline)
-
-
 @contextlib.contextmanager
 def partitions_exposed(device):
     with transact(
         prepare=(
             f'Exposing kpartx partitions for {device}',
-            lambda: expose_kpartx_partitions(device)
+            lambda: log_and_call(['kpartx', '-a', '-s', device])
         ),
         final=(
             f'cleaning up partitions for device {device}',
@@ -216,9 +218,7 @@ def parse_partitions(device, lines):
 
 def get_disk_information(device):
     real_device = os.path.realpath(device)
-    cmdline = ['parted', '-s', '-m', real_device, 'print']
-    logging.debug('Running %s', cmdline)
-    output = subprocess.check_output(cmdline, text=True)
+    output = log_and_output(['parted', '-s', '-m', real_device, 'print'])
     lines = list(line.strip() for line in output.splitlines())
     if len(lines) < 2:
         raise DiskConfigError(
@@ -268,9 +268,7 @@ def get_partition(device, disk_info, name):
 def set_partition_name(device, number, name):
     logging.info('Setting partition name to %s for partition number %d on %s',
                  name, number, device)
-    cmdline = ['parted', '-s', device, 'name', str(number), name]
-    logging.debug('Running %s', cmdline)
-    subprocess.check_call(cmdline)
+    log_and_call(['parted', '-s', device, 'name', str(number), name])
 
 
 def generate_timestamp():
@@ -299,8 +297,7 @@ def snapshot_glob(origin):
 def is_lv_open(name):
     logging.info('Checking if LV %s is open', name)
     cmdline = ['lvs', '-o', 'lv_attr', '--noheadings', name]
-    logging.debug('Running %s', cmdline)
-    output = subprocess.check_output(cmdline, text=True).strip()
+    output = log_and_output(cmdline).strip()
     flag = output[5]
     if flag == '-':
         return False
@@ -314,20 +311,15 @@ def create_lvm_snapshot(origin, name, size, non_volatile_pv):
     cmdline = ['lvcreate', '-y', '-s', '-L', size, '-n', name, origin]
     if non_volatile_pv is not None:
         cmdline.append(non_volatile_pv)
-    logging.debug('Running %s', cmdline)
-    subprocess.check_call(cmdline)
+    log_and_call(cmdline)
 
 
 def remove_lv(name):
-    cmdline = ['lvremove', '-f', name]
-    logging.debug('Running %s', cmdline)
-    subprocess.check_call(cmdline)
+    log_and_call(['lvremove', '-f', name])
 
 
 def umount(mountpoint):
-    umount_cmdline = ['umount', mountpoint]
-    logging.debug('Running %s', umount_cmdline)
-    subprocess.check_call(umount_cmdline)
+    log_and_call(['umount', mountpoint])
 
 
 @contextlib.contextmanager
@@ -343,12 +335,10 @@ def mounted(device, mountpoint, type_=None, options=None):
     mount_cmdline.append(mountpoint)
 
     logging.info('Mounting %s to %s', device, mountpoint)
-    logging.debug('Running %s', mount_cmdline)
-    subprocess.check_call(mount_cmdline)
+    log_and_call(mount_cmdline)
 
-    with transact(
-        final=(f'unmouning {mountpoint}', lambda _: umount(mountpoint))
-    ):
+    with transact(final=(f'unmouning {mountpoint}',
+                         lambda _: log_and_call(['umount', mountpoint]))):
         yield
 
 
@@ -395,15 +385,12 @@ def create_lvm_volume(name, size, vg, pv=None):
     create_cmdline = ['lvcreate', '-y', '-L', f'{size}B', '-n', name, vg]
     if pv is not None:
         create_cmdline.append(pv)
-    logging.debug('Running %s', create_cmdline)
-    subprocess.check_call(create_cmdline)
+    log_and_call(create_cmdline)
     return name
 
 
 def create_volume_copy(src, dst, non_volatile_pv):
-    size_cmdline = ['blockdev', '--getsize64', src]
-    logging.debug('Running %s', size_cmdline)
-    size = subprocess.check_output(size_cmdline, text=True).strip()
+    size = log_and_output(['blockdev', '--getsize64', src]).strip()
     vg = os.path.basename(os.path.dirname(src))
     return os.path.join(
         os.path.dirname(src),
@@ -427,10 +414,8 @@ def volume_copy(src, dst, non_volatile_pv):
 
 
 def copy_data(src, dst, block_size='128M'):
-    cmdline = ['dd', f'if={src}', f'of={dst}', f'bs={block_size}']
     logging.info('Copying data from %s to %s', src, dst)
-    logging.debug('Running %s', cmdline)
-    subprocess.check_call(cmdline)
+    log_and_call(['dd', f'if={src}', f'of={dst}', f'bs={block_size}'])
 
 
 def create_cache_volume(non_cached_name, config):
@@ -463,8 +448,7 @@ def configure_caching(non_cached_volume, config):
             ]
             logging.info('Enabling cache for %s on %s', non_cached_volume,
                          cache_volume_name)
-            logging.debug('Running %s', enable_cmdline)
-            subprocess.check_call(enable_cmdline)
+            log_and_call(enable_cmdline)
             cached_volume = non_cached_volume
             return cached_volume
     except Exception:
@@ -518,25 +502,21 @@ class Virsh(VirtualMachineManager):
     def is_vm_running(self, name):
         logging.info('Checking if %s is running', name)
         cmdline = ['virsh', 'list', '--state-running', '--name']
-        logging.debug('Running %s', cmdline)
-        list_output = subprocess.check_output(cmdline, text=True)
+        list_output = log_and_output(cmdline)
         domains = set(d.strip() for d in list_output.splitlines() if d)
         logging.info('Running domains: %s', domains)
 
         return name in domains
 
     def start(self, name):
-        logging.info('Starting %s', name)
-        subprocess.check_call(['virsh', 'start', name])
+        log_and_call(['virsh', 'start', name])
 
     def reset(self, name):
         logging.warning('Resetting %s', name)
-        subprocess.check_call(['virsh', 'reset', name])
+        log_and_call(['virsh', 'reset', name])
 
     def get_disks(self, name):
-        cmdline = ['virsh', 'dumpxml', name]
-        logging.debug('Running %s', cmdline)
-        xml = subprocess.check_output(cmdline, text=True)
+        xml = log_and_output(['virsh', 'dumpxml', name])
         root = ET.fromstring(xml)
         for disk in root.findall('./devices/disk/source'):
             yield disk.get('dev')
@@ -627,9 +607,7 @@ def write_cow_config(args, root):
 def run_chroot_script(root, script):
     if script is not None:
         logging.info('Running chroot script %s in %s', script, root)
-        cmdline = ['chroot', root, script]
-        logging.debug('Running %s', cmdline)
-        subprocess.check_call(cmdline)
+        log_and_call(['chroot', root, script])
 
 
 def snapshot_artifacts_path(output, snapshot_disk):
@@ -660,9 +638,8 @@ def publish_kernel_images(root, artifacts):
 
 
 def remove_iscsi_backstore(name):
-    cmdline = ['targetcli', '/backstores/block', 'delete', name]
-    logging.info('Removing iSCSI backstore: %s', cmdline)
-    subprocess.check_call(cmdline)
+    logging.info('Removing iSCSI backstore %s', name)
+    log_and_call(['targetcli', '/backstores/block', 'delete', name])
 
 
 def get_iscsi_backstore_name(device):
@@ -674,8 +651,8 @@ def create_iscsi_backstore(device):
     name = get_iscsi_backstore_name(device)
     cmdline = ['targetcli', '/backstores/block', 'create',
                f'dev={device}', f'name={name}', 'readonly=True']
-    logging.info('Adding iSCSI backstore: %s', cmdline)
-    subprocess.check_call(cmdline)
+    logging.info('Adding iSCSI backstore %s', name)
+    log_and_call(cmdline)
     with transact(
         rollback=(
             f'cleaning up iSCSI backstore {name}',
@@ -686,16 +663,15 @@ def create_iscsi_backstore(device):
 
 
 def remove_iscsi_target(name):
-    cmdline = ['targetcli', '/iscsi', 'delete', name]
-    logging.info('Removing iSCSI target: %s', cmdline)
-    subprocess.check_call(cmdline)
+    logging.info('Removing iSCSI target %s', name)
+    log_and_call(['targetcli', '/iscsi', 'delete', name])
 
 
 def attach_backstore_to_iscsi_target(target_name, backstore_name):
+    logging.info('Adding iSCSI LUN to %s from %s', target_name, backstore_name)
     cmdline = ['targetcli', f'/iscsi/{target_name}/tpg1/luns', 'create',
                f'/backstores/block/{backstore_name}']
-    logging.info('Adding iSCSI LUN: %s', cmdline)
-    subprocess.check_call(cmdline)
+    log_and_call(cmdline)
 
 
 def get_iscsi_target_name(backstore_name):
@@ -705,9 +681,8 @@ def get_iscsi_target_name(backstore_name):
 @contextlib.contextmanager
 def create_iscsi_target(backstore_name):
     target_name = get_iscsi_target_name(backstore_name)
-    cmdline = ['targetcli', '/iscsi', 'create', target_name]
-    logging.info('Adding iSCSI target: %s', cmdline)
-    subprocess.check_call(cmdline)
+    logging.info('Adding iSCSI target %s', target_name)
+    log_and_call(['targetcli', '/iscsi', 'create', target_name])
 
     with transact(
         rollback=(
@@ -722,14 +697,13 @@ def create_iscsi_target(backstore_name):
 def configure_authentication(target_name):
     cmdline = ['targetcli', f'/iscsi/{target_name}/tpg1', 'set', 'attribute',
                'generate_node_acls=1']
-    logging.info('Configuring iSCSI authentication: %s', cmdline)
-    subprocess.check_call(cmdline)
+    logging.info('Configuring iSCSI authentication')
+    log_and_call(cmdline)
 
 
 def save_iscsi_config():
-    cmdline = ['targetcli', 'saveconfig']
-    logging.debug('Saving iSCSI configuration: %s', cmdline)
-    subprocess.check_call(cmdline)
+    logging.info('Saving iSCSI configuration')
+    log_and_call(['targetcli', 'saveconfig'])
 
 
 @contextlib.contextmanager
@@ -822,10 +796,9 @@ def reboot_and_check_test_vm(vmm, vm, host, timestamp):
     def booted_properly(host):
         if not is_accessible(host):
             return False
-        cmdline = ['ssh', host, 'cat', '/etc/timestamp']
-        logging.debug('Running %s', cmdline)
         try:
-            output = subprocess.check_output(cmdline, text=True).strip()
+            cmdline = ['ssh', host, 'cat', '/etc/timestamp']
+            output = log_and_output(cmdline).strip()
             if output != timestamp:
                 logging.warning('Actual timestamp %s is not expected %s',
                                 output, timestamp)
