@@ -576,6 +576,7 @@ class CacheConfig:
     non_volatile_pv: str
     cache_pv: str
     cache_volume_size: str
+    cached_volumes_path: str
 
 
 def check_preconditions(vmm, ref_vm, ref_host):
@@ -841,56 +842,6 @@ def reboot_and_check_test_vm(vmm, vm, host, timestamp):
     wait_for(lambda: booted_properly(host), timeout=180, step=10)
 
 
-def parse_config(type_):
-    def parser(value):
-        with open(value) as config_input:
-            return type_(**json.load(config_input))
-    return parser
-
-
-def parse_args(raw_args):
-    parser = argparse.ArgumentParser(raw_args[0])
-    parser.add_argument('-v', '--verbose', action='count', default=0)
-    subparsers = parser.add_subparsers(
-        metavar='subcommand', help='subcommand to execute', required=True
-    )
-
-    add_parser = subparsers.add_parser('add', help='Add new snapshot')
-    add_parser.add_argument('-s', '--snapshot-size', default='5G')
-    add_parser.add_argument('--cache-config', type=parse_config(CacheConfig))
-    add_parser.add_argument('--to-copy', action='append')
-    add_parser.add_argument('--chroot-script')
-    add_parser.add_argument('ref_vm')
-    add_parser.add_argument('ref_host')
-    add_parser.add_argument('partitions_config',
-                            type=parse_config(CowPartitionsConfig))
-    add_parser.add_argument('output')
-    add_parser.add_argument('test_vm')
-    add_parser.add_argument('test_host')
-    add_parser.set_defaults(func=add_snapshot)
-
-    clean_parser = subparsers.add_parser('clean', help='Cleanup old snapshots')
-    clean_parser.add_argument('--force-old', action='store_true')
-    clean_parser.add_argument('--force-latest', action='store_true')
-    clean_parser.add_argument('ref_vm')
-    clean_parser.add_argument('output')
-    clean_parser.set_defaults(func=clean_snapshots)
-
-    return parser.parse_args(raw_args[1:])
-
-
-def configure_logging(args):
-    levels = {
-        0: logging.WARN,
-        1: logging.INFO,
-    }
-    logging.basicConfig(
-        level=levels.get(args.verbose, logging.DEBUG),
-        format='%(asctime)s: %(levelname)-8s ' '%(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-
 def add_snapshot(args):
     vmm = Virsh()
     check_preconditions(vmm, args.ref_vm, args.ref_host)
@@ -1025,6 +976,57 @@ def clean_snapshots(args):
     if args.force_latest:
         logging.warning('Removing latest snapshot %s', latest)
         clean_snapshot(args.output, latest, force=True)
+
+
+def parse_config(type_):
+    def parser(value):
+        with open(value) as config_input:
+            return type_(**json.load(config_input))
+    return parser
+
+
+def parse_args(raw_args):
+    parser = argparse.ArgumentParser(raw_args[0])
+    parser.add_argument('-v', '--verbose', action='count', default=0)
+    subparsers = parser.add_subparsers(
+        metavar='subcommand', help='subcommand to execute', required=True
+    )
+
+    add_parser = subparsers.add_parser('add', help='Add new snapshot')
+    add_parser.add_argument('-s', '--snapshot-size', default='5G')
+    add_parser.add_argument('--cache-config', type=parse_config(CacheConfig))
+    add_parser.add_argument('--to-copy', action='append')
+    add_parser.add_argument('--chroot-script')
+    add_parser.add_argument('ref_vm')
+    add_parser.add_argument('ref_host')
+    add_parser.add_argument('partitions_config',
+                            type=parse_config(CowPartitionsConfig))
+    add_parser.add_argument('output')
+    add_parser.add_argument('test_vm')
+    add_parser.add_argument('test_host')
+    add_parser.set_defaults(func=add_snapshot)
+
+    clean_parser = subparsers.add_parser('clean', help='Cleanup old snapshots')
+    clean_parser.add_argument('--force-old', action='store_true')
+    clean_parser.add_argument('--force-latest', action='store_true')
+    clean_parser.add_argument('--cache-config', type=parse_config(CacheConfig))
+    clean_parser.add_argument('ref_vm')
+    clean_parser.add_argument('output')
+    clean_parser.set_defaults(func=clean_snapshots)
+
+    return parser.parse_args(raw_args[1:])
+
+
+def configure_logging(args):
+    levels = {
+        0: logging.WARN,
+        1: logging.INFO,
+    }
+    logging.basicConfig(
+        level=levels.get(args.verbose, logging.DEBUG),
+        format='%(asctime)s: %(levelname)-8s ' '%(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
 
 def main(raw_args):
