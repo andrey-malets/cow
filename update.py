@@ -910,7 +910,8 @@ def get_dynamic_iscsi_sessions(target_name):
         return []
 
     with open(dynamic_sessions_file) as sessions_input:
-        return list(map(str.strip, sessions_input.read().splitlines()))
+        lines = sessions_input.read().split('\0')
+        return list(filter(None, map(str.strip, lines)))
 
 
 def clean_snapshot(output, name, force=False):
