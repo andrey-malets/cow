@@ -286,6 +286,10 @@ def vm_snapshot_name(lvm_snapshot_name):
     return f'{lvm_snapshot_name}-snapshot'
 
 
+def lv_path(vg, lv):
+    return f'/dev/{vg}/{lv}'
+
+
 def cache_lv_name(vm_snapshot_name):
     return f'{vm_snapshot_name}-cache'
 
@@ -457,6 +461,10 @@ def delete_cache_record(config, volume):
         os.remove(record_file)
     except FileNotFoundError:
         logging.warning('Cache record file %s does not exist', record_file)
+
+
+def list_cache_records(config):
+    return os.listdir(config.cached_volumes_path)
 
 
 @contextlib.contextmanager
@@ -1000,7 +1008,65 @@ def clean_snapshots(args):
         clean_snapshot(args.output, args.cache_config, latest, force=True)
 
 
-def parse_config(type_):
+def disable_cache_on(volume):
+    if os.path.exists(volume):
+        try:
+            logging.info('Disabling cache on %s', volume)
+            log_and_call(['lvconvert', '--uncache', volume])
+        except Exception:
+            logging.exception('Failed to disable cache for %s', volume)
+
+
+def cleanup_cache(args):
+    vg = args.cache_config.volume_group
+    for record in list_cache_records(args.cache_config):
+        disable_cache_on(lv_path(vg, record))
+
+    logging.info('Reducing VG %s, removing missinv PVs', vg)
+    log_and_call(['vgreduce', '--removemissing', vg])
+
+    for record in list_cache_records(args.cache_config):
+        lv = lv_path(vg, record)
+        logging.info('Activating %s', lv)
+        log_and_call(['lvchange', '-ay', lv])
+
+
+def enable_cache(args):
+    if args.cleanup:
+        cleanup_cache(args)
+
+    cache_pv = args.cache_config.cache_pv
+    logging.info('Creating cache PV %s', cache_pv)
+    log_and_call(['pvcreate', '-y', cache_pv])
+
+    vg = args.cache_config.volume_group
+    logging.info('Adding cache PV %s to VG %s', cache_pv, vg)
+    log_and_call(['vgextend', vg, cache_pv])
+
+    for record in list_cache_records(args.cache_config):
+        configure_caching(lv_path(vg, record), args.cache_config)
+
+
+def disable_cache(args):
+    vg = args.cache_config.volume_group
+    for record in list_cache_records(args.cache_config):
+        disable_cache_on(lv_path(vg, record))
+
+    cache_pv = args.cache_config.cache_pv
+    try:
+        logging.info('Removing cache PV %s from VG %s', cache_pv, vg)
+        log_and_call(['vgreduce', vg, cache_pv])
+    except Exception:
+        logging.exception('Failed to remove cache PV from VG')
+
+    try:
+        logging.info('Destroying cache PV %s', cache_pv)
+        log_and_call(['pvremove', '-f', cache_pv])
+    except Exception:
+        logging.exception('Failed to destroy cache PV')
+
+
+def config_parser(type_):
     def parser(value):
         with open(value) as config_input:
             return type_(**json.load(config_input))
@@ -1016,13 +1082,13 @@ def parse_args(raw_args):
 
     add_parser = subparsers.add_parser('add', help='Add new snapshot')
     add_parser.add_argument('-s', '--snapshot-size', default='5G')
-    add_parser.add_argument('--cache-config', type=parse_config(CacheConfig))
+    add_parser.add_argument('--cache-config', type=config_parser(CacheConfig))
     add_parser.add_argument('--to-copy', action='append')
     add_parser.add_argument('--chroot-script')
     add_parser.add_argument('ref_vm')
     add_parser.add_argument('ref_host')
     add_parser.add_argument('partitions_config',
-                            type=parse_config(CowPartitionsConfig))
+                            type=config_parser(CowPartitionsConfig))
     add_parser.add_argument('output')
     add_parser.add_argument('test_vm')
     add_parser.add_argument('test_host')
@@ -1031,10 +1097,34 @@ def parse_args(raw_args):
     clean_parser = subparsers.add_parser('clean', help='Cleanup old snapshots')
     clean_parser.add_argument('--force-old', action='store_true')
     clean_parser.add_argument('--force-latest', action='store_true')
-    clean_parser.add_argument('--cache-config', type=parse_config(CacheConfig))
+    clean_parser.add_argument('--cache-config',
+                              type=config_parser(CacheConfig))
     clean_parser.add_argument('ref_vm')
     clean_parser.add_argument('output')
     clean_parser.set_defaults(func=clean_snapshots)
+
+    enable_cache_parser = subparsers.add_parser(
+        'enable_cache',
+        help='Add cache PV to VG and enable cache for all the '
+             'volumes configured to use with cache'
+    )
+    enable_cache_parser.add_argument('cache_config',
+                                     type=config_parser(CacheConfig))
+    enable_cache_parser.add_argument(
+        '--cleanup', action='store_true',
+        help='Shrink cached VG and uncache previously cached volumes, '
+             'if necessary, useful for system startup scripts'
+    )
+    enable_cache_parser.set_defaults(func=enable_cache)
+
+    disable_cache_parser = subparsers.add_parser(
+        'disable_cache',
+        help='Disable cache for all the cached volumes configured and '
+             'remove cache PV out of VG'
+    )
+    disable_cache_parser.add_argument('cache_config',
+                                      type=config_parser(CacheConfig))
+    disable_cache_parser.set_defaults(func=disable_cache)
 
     return parser.parse_args(raw_args[1:])
 
