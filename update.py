@@ -976,6 +976,8 @@ def clean_snapshot(output, cache_config, name, force=False):
     except Exception:
         logging.warning(f'Failed to remove iSCSI backstore {backstore_name}')
 
+    save_iscsi_config()
+
     cleanup_kpartx(name)
 
     if cache_config:
