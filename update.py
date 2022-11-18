@@ -11,6 +11,7 @@ import glob
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -30,12 +31,15 @@ def log_and_output(cmdline, **kwargs):
                         **kwargs)
 
 
-def ssh(host, command, options=None, **kwargs):
+def ssh(host, command, output=False, options=None, **kwargs):
     cmdline = ['ssh']
     if options is not None:
         cmdline.extend(options)
     cmdline.extend([host, command])
-    return log_and_call(cmdline, method=subprocess.call, **kwargs)
+    if output:
+        return log_and_output(cmdline, **kwargs)
+    else:
+        return log_and_call(cmdline, method=subprocess.call, **kwargs)
 
 
 class Timeout(Exception):
@@ -869,6 +873,43 @@ def reboot_and_check_test_vm(vmm, vm, host, timestamp):
     wait_for(lambda: booted_properly(host), timeout=180, step=10)
 
 
+def try_reboot_if_idle(host):
+    logging.info('Checking if host %s is idle', host)
+    try:
+        who = ssh(host, 'who', output=True,
+                  options=('-o', 'ConnectTimeout=1')).strip()
+    except Exception:
+        logging.exception('Failed to check if host %s is idle', host)
+        return
+
+    if who:
+        logging.info('Host %s is busy, skipping reboot', host)
+    else:
+        try:
+            reboot(host)
+        except Exception:
+            logging.exception('Failed to reboot host %s', host)
+
+
+def reboot_inactive_clients(vmm, args):
+    snapshots = get_snapshots(vmm, args.ref_vm)
+
+    for snapshot in snapshots:
+        backstore_name = get_iscsi_backstore_name(snapshot)
+        target_name = get_iscsi_target_name(backstore_name)
+        sessions = get_dynamic_iscsi_sessions(target_name)
+        for session in sessions:
+            try:
+                host = get_hostname(session)
+            except Exception:
+                logging.exception('Failed to get hostname from %s', session)
+                continue
+            logging.debug('Snapshot %s is used on %s in session %s',
+                          snapshot, host, session)
+            if host != args.test_host:
+                try_reboot_if_idle(host)
+
+
 def add_snapshot(args):
     vmm = Virsh()
     check_preconditions(vmm, args.ref_vm, args.ref_host)
@@ -922,6 +963,10 @@ def add_snapshot(args):
         )
         logging.info('Published iPXE config to %s', ipxe_config)
 
+    if args.push:
+        logging.info('Pushing update to inactive clients with reboot')
+        reboot_inactive_clients(vmm, args)
+
 
 def get_snapshots(vmm, vm):
     pattern = snapshot_glob(get_disk(vmm, vm))
@@ -939,6 +984,14 @@ def get_dynamic_iscsi_sessions(target_name):
     with open(dynamic_sessions_file) as sessions_input:
         lines = sessions_input.read().split('\0')
         return list(filter(None, map(str.strip, lines)))
+
+
+def get_hostname(session, host_re=re.compile(r'^.+\:(?P<hostname>.+)'
+                                             r'_....-..-.._..-..-..$')):
+    match = host_re.match(session)
+    if not match:
+        raise ValueError(f'Session name {session} did not match any hostname')
+    return match.group('hostname')
 
 
 def clean_snapshot(output, cache_config, name, force=False):
@@ -1089,6 +1142,9 @@ def parse_args(raw_args):
     add_parser.add_argument('--cache-config', type=config_parser(CacheConfig))
     add_parser.add_argument('--to-copy', action='append')
     add_parser.add_argument('--chroot-script')
+    add_parser.add_argument('--push', action='store_true',
+                            help='Try to push update to inactive clients')
+
     add_parser.add_argument('ref_vm')
     add_parser.add_argument('ref_host')
     add_parser.add_argument('partitions_config',
