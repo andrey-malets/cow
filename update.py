@@ -5,6 +5,8 @@ import argparse
 import contextlib
 from dataclasses import dataclass
 import datetime
+import errno
+import fcntl
 import glob
 import json
 import logging
@@ -1073,6 +1075,9 @@ def config_parser(type_):
 def parse_args(raw_args):
     parser = argparse.ArgumentParser(raw_args[0])
     parser.add_argument('-v', '--verbose', action='count', default=0)
+    parser.add_argument('-l', '--lock',
+                        help='Lock specified file exclusively while '
+                             'running an update')
     subparsers = parser.add_subparsers(
         metavar='subcommand', help='subcommand to execute', required=True
     )
@@ -1138,10 +1143,29 @@ def configure_logging(args):
     )
 
 
+@contextlib.contextmanager
+def locked(args):
+    if args.lock:
+        with open(args.lock, 'w') as lock:
+            try:
+                logging.debug('Locking %s', args.lock)
+                fcntl.lockf(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                yield
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    logging.error('%s is already locked, exiting', args.lock)
+                    sys.exit(2)
+                raise
+            finally:
+                logging.debug('Unocking %s', args.lock)
+                fcntl.lockf(lock, fcntl.LOCK_UN)
+
+
 def main(raw_args):
     args = parse_args(raw_args)
     configure_logging(args)
-    return args.func(args)
+    with locked(args):
+        return args.func(args)
 
 
 if __name__ == '__main__':
