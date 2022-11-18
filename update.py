@@ -1215,7 +1215,7 @@ def locked(args):
                     sys.exit(2)
                 raise
             else:
-                logging.debug('Unocking %s', args.lock)
+                logging.debug('Unlocking %s', args.lock)
                 fcntl.lockf(lock, fcntl.LOCK_UN)
 
 

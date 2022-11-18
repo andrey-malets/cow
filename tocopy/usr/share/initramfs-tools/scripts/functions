@@ -350,7 +350,7 @@ configure_networking()
 		done
 	fi
 
-	ISCSI_INITIATOR="iqn.2013-07.${DNSDOMAIN%% *}:${HOSTNAME}.${DNSDOMAIN}_$(date +%F_%H_%M-%S)"
+	ISCSI_INITIATOR="iqn.2013-07.${DNSDOMAIN%% *}:${HOSTNAME}.${DNSDOMAIN}_$(date +%F_%H-%M-%S)"
 }
 
 # Wait for queued kernel/udev events
