@@ -1009,12 +1009,11 @@ def clean_snapshots(args):
 
 
 def disable_cache_on(volume):
-    if os.path.exists(volume):
-        try:
-            logging.info('Disabling cache on %s', volume)
-            log_and_call(['lvconvert', '--uncache', volume])
-        except Exception:
-            logging.exception('Failed to disable cache for %s', volume)
+    try:
+        logging.info('Disabling cache on %s', volume)
+        log_and_call(['lvconvert', '--uncache', volume])
+    except Exception:
+        logging.exception('Failed to disable cache for %s', volume)
 
 
 def cleanup_cache(args):
@@ -1022,13 +1021,11 @@ def cleanup_cache(args):
     for record in list_cache_records(args.cache_config):
         disable_cache_on(lv_path(vg, record))
 
-    logging.info('Reducing VG %s, removing missinv PVs', vg)
+    logging.info('Reducing VG %s, removing missing PVs', vg)
     log_and_call(['vgreduce', '--removemissing', vg])
 
-    for record in list_cache_records(args.cache_config):
-        lv = lv_path(vg, record)
-        logging.info('Activating %s', lv)
-        log_and_call(['lvchange', '-ay', lv])
+    logging.info('Activating all LVs in VG %s', vg)
+    log_and_call(['vgchange', '-ay', vg])
 
 
 def enable_cache(args):
