@@ -1156,7 +1156,7 @@ def locked(args):
                     logging.error('%s is already locked, exiting', args.lock)
                     sys.exit(2)
                 raise
-            finally:
+            else:
                 logging.debug('Unocking %s', args.lock)
                 fcntl.lockf(lock, fcntl.LOCK_UN)
 
