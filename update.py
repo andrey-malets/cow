@@ -443,6 +443,15 @@ def copy_data(src, dst, block_size='128M'):
     log_and_call(['dd', f'if={src}', f'of={dst}', f'bs={block_size}'])
 
 
+def move_link(src, dst):
+    new_dst = f'{dst}.new'
+    if os.path.exists(new_dst):
+        logging.waring('%s already exists, removing', new_dst)
+        os.unlink(new_dst)
+    os.symlink(src, new_dst)
+    os.rename(new_dst, dst)
+
+
 @contextlib.contextmanager
 def link_snapshot_copy(origin, copy_to, non_volatile_pv, extents='1'):
     copy_name = snapshot_copy_name(origin)
@@ -454,7 +463,7 @@ def link_snapshot_copy(origin, copy_to, non_volatile_pv, extents='1'):
         ),
         commit=(
             f'linking snapshot copy {copy_name} to {copy_to}',
-            lambda _: os.symlink(copy_name, copy_to)
+            lambda _: move_link(copy_name, copy_to)
         ),
         rollback=(
             f'cleaning snapshot copy {copy_name}',
