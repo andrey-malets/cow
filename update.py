@@ -281,6 +281,10 @@ def generate_timestamp():
     return datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
 
 
+def non_volatile_pv(cache_config):
+    return (cache_config.non_volatile_pv if cache_config else None)
+
+
 LVM_SNAPSHOT_SUFFIX = '-snapshot'
 
 
@@ -290,6 +294,10 @@ def lvm_snapshot_name(origin, timestamp):
 
 def vm_snapshot_name(lvm_snapshot_name):
     return f'{lvm_snapshot_name}-snapshot'
+
+
+def snapshot_copy_name(vm_snapshot_name):
+    return f'{vm_snapshot_name}-copy'
 
 
 def lv_path(vg, lv):
@@ -317,8 +325,15 @@ def is_lv_open(name):
         raise RuntimeError(f'Cannot parse LV attributes "{output}"')
 
 
-def create_lvm_snapshot(origin, name, size, non_volatile_pv):
-    cmdline = ['lvcreate', '-y', '-s', '-L', size, '-n', name, origin]
+def create_lvm_snapshot(origin, name, non_volatile_pv, size=None,
+                        extents=None):
+    cmdline = ['lvcreate', '-y', '-s', '-n', name]
+    if size:
+        cmdline.extend(('-L', size))
+    else:
+        assert extents
+        cmdline.extend(('-l', extents))
+    cmdline.append(origin)
     if non_volatile_pv is not None:
         cmdline.append(non_volatile_pv)
     log_and_call(cmdline)
@@ -386,7 +401,7 @@ def create_vm_disk_snapshot(vmm, vm, host, timestamp, size, non_volatile_pv):
         wait_for(lambda: not is_lv_open(lv), timeout=30, step=1)
         origin = lv
         name = lvm_snapshot_name(origin, timestamp)
-        create_lvm_snapshot(origin, name, size, non_volatile_pv)
+        create_lvm_snapshot(origin, name, non_volatile_pv, size=size)
 
     return os.path.join(os.path.dirname(origin), name)
 
@@ -426,6 +441,27 @@ def volume_copy(src, dst, non_volatile_pv):
 def copy_data(src, dst, block_size='128M'):
     logging.info('Copying data from %s to %s', src, dst)
     log_and_call(['dd', f'if={src}', f'of={dst}', f'bs={block_size}'])
+
+
+@contextlib.contextmanager
+def link_snapshot_copy(origin, copy_to, non_volatile_pv, extents='1'):
+    copy_name = snapshot_copy_name(origin)
+    with transact(
+        prepare=(
+            f'Creating snapshot copy {copy_name} from {origin}',
+            lambda: create_lvm_snapshot(origin, copy_name, non_volatile_pv,
+                                        extents=extents)
+        ),
+        commit=(
+            f'linking snapshot copy {copy_name} to {copy_to}',
+            lambda _: os.symlink(copy_name, copy_to)
+        ),
+        rollback=(
+            f'cleaning snapshot copy {copy_name}',
+            lambda _: remove_lv(copy_name)
+        ),
+    ):
+        yield
 
 
 def create_cache_volume(non_cached_name, config):
@@ -516,14 +552,13 @@ def configure_caching(non_cached_volume, config):
 
 @contextlib.contextmanager
 def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size, cache_config):
-    non_volatile_pv = (cache_config.non_volatile_pv if cache_config else None)
+    nvpv = non_volatile_pv(cache_config)
     with contextlib.ExitStack() as stack:
         with transact(
             prepare=(
                 f'Creating disk snapshot of {ref_vm}',
                 lambda: create_vm_disk_snapshot(vmm, ref_vm, ref_host,
-                                                timestamp, size,
-                                                non_volatile_pv)
+                                                timestamp, size, nvpv)
             ),
             final=(
                 'cleaning up disk snapshot',
@@ -533,7 +568,7 @@ def vm_disk_snapshot(vmm, ref_vm, ref_host, timestamp, size, cache_config):
             assert os.path.exists(lvm_snapshot)
             vm_snapshot = stack.enter_context(volume_copy(
                 lvm_snapshot, vm_snapshot_name(os.path.basename(lvm_snapshot)),
-                non_volatile_pv
+                nvpv
             ))
             assert os.path.exists(vm_snapshot)
             copy_data(lvm_snapshot, vm_snapshot)
@@ -944,6 +979,12 @@ def add_snapshot(args):
             run_chroot_script(root, args.chroot_script)
             kernel, initrd = publish_kernel_images(root, artifacts)
 
+        if args.link_snapshot_copy:
+            snapshot_stack.enter_context(
+                link_snapshot_copy(snapshot_disk), args.link_snapshot_copy,
+                non_volatile_pv(args)
+            )
+
         configure_caching(snapshot_disk, args.cache_config)
 
         iscsi_target_name = snapshot_stack.enter_context(
@@ -1022,12 +1063,12 @@ def clean_snapshot(output, cache_config, name, force=False):
     try:
         remove_iscsi_target(target_name)
     except Exception:
-        logging.warning(f'Failed to remove iSCSI target {target_name}')
+        logging.warning('Failed to remove iSCSI target %s', target_name)
 
     try:
         remove_iscsi_backstore(backstore_name)
     except Exception:
-        logging.warning(f'Failed to remove iSCSI backstore {backstore_name}')
+        logging.warning('Failed to remove iSCSI backstore %s', backstore_name)
 
     save_iscsi_config()
 
@@ -1035,6 +1076,14 @@ def clean_snapshot(output, cache_config, name, force=False):
 
     if cache_config:
         delete_cache_record(cache_config, name)
+
+    copy_name = snapshot_copy_name(name)
+    if os.path.exists(copy_name):
+        logging.info('Removing snapshot copy %s', copy_name)
+        try:
+            remove_lv(copy_name)
+        except Exception:
+            logging.warning('Failed to remove snapshot copy %s', copy_name)
 
     if is_lv_open(name):
         raise RuntimeError(f'LV {name} is still open')
@@ -1142,6 +1191,9 @@ def parse_args(raw_args):
     add_parser.add_argument('--cache-config', type=config_parser(CacheConfig))
     add_parser.add_argument('--to-copy', action='append')
     add_parser.add_argument('--chroot-script')
+    add_parser.add_argument('--link-snapshot-copy',
+                            help='Add symlink to snapshot suitable for '
+                                 'deploying to this locaiton')
     add_parser.add_argument('--push', action='store_true',
                             help='Try to push update to inactive clients')
 
