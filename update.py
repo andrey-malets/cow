@@ -982,7 +982,7 @@ def add_snapshot(args):
         if args.link_snapshot_copy:
             snapshot_stack.enter_context(
                 link_snapshot_copy(snapshot_disk, args.link_snapshot_copy,
-                                   non_volatile_pv(args))
+                                   non_volatile_pv(args.cache_config))
             )
 
         configure_caching(snapshot_disk, args.cache_config)
