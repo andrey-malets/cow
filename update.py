@@ -453,23 +453,18 @@ def move_link(src, dst):
 
 
 @contextlib.contextmanager
-def link_snapshot_copy(origin, copy_to, non_volatile_pv, extents='1'):
+def link_snapshot_copy(origin, copy_to, non_volatile_pv):
     copy_name = snapshot_copy_name(origin)
-    with transact(
-        prepare=(
-            f'Creating snapshot copy {copy_name} from {origin}',
-            lambda: create_lvm_snapshot(origin, copy_name, non_volatile_pv,
-                                        extents=extents)
-        ),
-        commit=(
-            f'linking snapshot copy {copy_name} to {copy_to}',
-            lambda _: move_link(copy_name, copy_to)
-        ),
-        rollback=(
-            f'cleaning snapshot copy {copy_name}',
-            lambda _: remove_lv(copy_name)
-        ),
-    ):
+    with contextlib.ExitStack() as stack:
+        copy = stack.enter_context(
+            volume_copy(origin, copy_name, non_volatile_pv)
+        )
+        stack.enter_context(transact(
+            commit=(
+                f'linking snapshot copy {copy_name} to {copy_to}',
+                lambda _: move_link(copy, copy_to)
+            ),
+        ))
         yield
 
 
