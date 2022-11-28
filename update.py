@@ -459,6 +459,7 @@ def link_snapshot_copy(origin, copy_to, non_volatile_pv):
         copy = stack.enter_context(
             volume_copy(origin, copy_name, non_volatile_pv)
         )
+        copy_data(origin, copy)
         stack.enter_context(transact(
             commit=(
                 f'linking snapshot copy {copy_name} to {copy_to}',
