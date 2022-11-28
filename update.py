@@ -1272,6 +1272,8 @@ def locked(args):
             else:
                 logging.debug('Unlocking %s', args.lock)
                 fcntl.lockf(lock, fcntl.LOCK_UN)
+    else:
+        yield
 
 
 def main(raw_args):
