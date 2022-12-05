@@ -1186,7 +1186,7 @@ def config(value):
         return json.load(config_input)
 
 
-def parse_supporting_config(parser, raw_args):
+def get_args(raw_args):
     config_parser = argparse.ArgumentParser(raw_args[0], add_help=False)
     config_parser.add_argument(
         '--config', type=config,
@@ -1198,9 +1198,9 @@ def parse_supporting_config(parser, raw_args):
             config_parser.error(
                 '--config is not compatible with other options'
             )
-        return parser.parse_args(known_args.config)
+        return known_args.config
     else:
-        return parser.parse_args(raw_args[1:])
+        return raw_args[1:]
 
 
 def parse_args(raw_args):
@@ -1265,7 +1265,7 @@ def parse_args(raw_args):
                                       type=config_parser(CacheConfig))
     disable_cache_parser.set_defaults(func=disable_cache)
 
-    return parse_supporting_config(parser, raw_args)
+    return parser.parse_args(get_args(raw_args))
 
 
 def configure_logging(args):
